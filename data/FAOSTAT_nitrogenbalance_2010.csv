@@ -1,0 +1,9 @@
+﻿Domain Code,Domain,Area Code (M49),Area,Element Code,Element,Item Code,Item,Year Code,Year,Unit,Value,Flag,Flag Description,Note
+"ESB","Cropland Nutrient Balance","001","World","7275","Cropland nitrogen","5087","Mineral fertilizers","2010","2010","t","93632978.5341","E","Estimated value",""
+"ESB","Cropland Nutrient Balance","001","World","7275","Cropland nitrogen","5062","Manure applied to Soils","2010","2010","t","24122348.1191","E","Estimated value",""
+"ESB","Cropland Nutrient Balance","001","World","7275","Cropland nitrogen","5076","Atmospheric Deposition","2010","2010","t","15067380.1229","E","Estimated value",""
+"ESB","Cropland Nutrient Balance","001","World","7275","Cropland nitrogen","5077","Crop Removal","2010","2010","t","82070149.9045","E","Estimated value",""
+"ESB","Cropland Nutrient Balance","001","World","7275","Cropland nitrogen","5078","Biological Fixation","2010","2010","t","31566281.227","E","Estimated value",""
+"ESB","Cropland Nutrient Balance","001","World","7275","Cropland nitrogen","5086","Seed","2010","2010","t","2513470.7115","E","Estimated value",""
+"ESB","Cropland Nutrient Balance","001","World","7275","Cropland nitrogen","5082","Leaching","2010","2010","t","14285009.3827","E","Estimated value",""
+"ESB","Cropland Nutrient Balance","001","World","7275","Cropland nitrogen","5083","Volatilisation","2010","2010","t","35619488.991","E","Estimated value",""
