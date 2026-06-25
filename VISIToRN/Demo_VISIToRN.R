@@ -12,22 +12,21 @@ if (!exists("VISIToRN", mode = "function")) {
 # Required external inputs
 # =========================================================
 if (!exists("visitnl_object_name")) {
-  stop("visitnl_object_name が与えられていません。")
+  stop("visitnl_object_name is not provided.")
 }
 if (!exists("humanN_year")) {
-  stop("humanN_year が与えられていません。")
+  stop("No humanN_year")
 }
 
 if (!exists("dat_dir")) {
-  stop("dat_dir が与えられていません。")
+  stop("No dat_dir")
 }
 
-# 外から ParFit_input を渡す
 if (!exists("ParFit_input")) {
-  ParFit_input <- c(867.78451, 2.14321, 2.36906)  # default
+  ParFit_input <- c(982.2591, 12.22721, 2.961817) 
 }
 if (length(ParFit_input) != 3 || any(!is.finite(ParFit_input))) {
-  stop("ParFit_input は長さ3の有限な数値ベクトルである必要があります。")
+  stop("ParFit_input needs to be a numeric vector of length 3 with finite values.")
 }
 
 visitnl_input <- get(visitnl_object_name, inherits = TRUE)

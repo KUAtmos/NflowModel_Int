@@ -7,6 +7,7 @@ load(file.path(data_dir, "VISITro_nat_ag.rdat"), envir = .GlobalEnv)
 load(file.path(data_dir, "RivArea.rdat"), envir = .GlobalEnv)
 load(file.path(data_dir, "HumanN_future.rdat"), envir = .GlobalEnv)
 load(file.path(data_dir, "dat_tas.rdat"), envir = .GlobalEnv)
+load(file.path(data_dir, "dat_dir.rdat"), envir = .GlobalEnv)
 
 rivnum_values <- scan("rivnum05.asc", what = numeric(), quiet = TRUE)
 rivnum_matrix <- matrix(rivnum_values, ncol = 720, nrow = 360, byrow = TRUE)
@@ -51,6 +52,8 @@ aggregate_river_mouth <- function(test_sim, rivnum_matrix, grid_df, riv_table) {
     rivnum = as.vector(rivnum_matrix)
   )
 
+
+
   df <- df %>%
     left_join(grid_df, by = c("lon_idx", "lat_idx"))
 
@@ -66,11 +69,240 @@ aggregate_river_mouth <- function(test_sim, rivnum_matrix, grid_df, riv_table) {
   df_river_named_mouth
 }
 
+analyze_concentration <- function(test_sim,
+                                  case_label,
+                                  nmip3 = FALSE,
+                                  out_dir = "output",
+                                  thr = 2.5) {
+
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+  suffix_save <- if (nmip3) "_NMIP3" else ""
+  file_suffix <- paste0(case_label, suffix_save)
+
+  # =========================================================
+  # Extract VISIToRN outputs
+  # =========================================================
+  QoutNint <- test_sim$QoutNint   # cumulative N outflow: ∑ QoutN(t)
+  Qout     <- test_sim$Qout       # water outflow [lon, lat, time]
+
+  if (is.null(QoutNint)) {
+    stop("test_sim$QoutNint が見つかりません。")
+  }
+  if (is.null(Qout)) {
+    stop("test_sim$Qout が見つかりません。")
+  }
+
+  # =========================================================
+  # Cumulative water outflow: ∑ Qout(t)
+  # =========================================================
+  Qout_int <- apply(Qout, c(1, 2), sum, na.rm = TRUE)
+
+  # Safety check
+  if (!all(dim(QoutNint) == dim(Qout_int))) {
+    stop(
+      "QoutNint と Qout_int の次元が一致しません: ",
+      "dim(QoutNint) = ", paste(dim(QoutNint), collapse = " x "),
+      ", dim(Qout_int) = ", paste(dim(Qout_int), collapse = " x ")
+    )
+  }
+
+  # =========================================================
+  # Freshwater concentration
+  # =========================================================
+  C_fw_ratio <- QoutNint / Qout_int
+  C_fw_ratio[Qout_int <= 0] <- NA
+  C_fw_ratio[!is.finite(C_fw_ratio)] <- NA
+
+  # mg N/L
+  # 以前のコードと同じ換算を維持
+  C_fw_mgL <- C_fw_ratio * 1e6
+
+  # =========================================================
+  # Ratio to threshold
+  # =========================================================
+  R <- C_fw_mgL / thr
+  R[C_fw_mgL <= 0] <- NA
+  R[!is.finite(R)] <- NA
+
+  breaks_ratio <- c(0, 0.3, 0.6, 1.0, 2, 3, Inf)
+
+  classes_vec <- cut(
+    as.vector(R),
+    breaks = breaks_ratio,
+    include.lowest = TRUE,
+    labels = FALSE
+  )
+
+  Z <- matrix(
+    classes_vec,
+    nrow = nrow(C_fw_mgL),
+    ncol = ncol(C_fw_mgL),
+    byrow = FALSE
+  )
+
+  Z[is.na(R)] <- NA
+
+  cols <- c(
+    "#08306B", "#4292C6", "#C6DBEF",
+    "#FEE0D2", "#FB6A4A", "#CB181D"
+  )
+
+  class_labels <- c(
+    "<= 0.3",
+    "0.3–0.6",
+    "0.6–1.0",
+    "1.0–2.0",
+    "2.0–3.0",
+    "> 3.0"
+  )
+
+  lon_seq <- seq(-179.75, 179.75, by = 0.5)
+  lat_seq <- seq( -89.75,  89.75, by = 0.5)
+
+  # =========================================================
+  # 1) Concentration relative to threshold: 6 classes
+  # =========================================================
+  png(
+    filename = file.path(out_dir, paste0("C_fw_ratio_6class_", file_suffix, ".png")),
+    width = 1200,
+    height = 800,
+    res = 150
+  )
+
+  fields::image.plot(
+    x = lon_seq,
+    y = lat_seq,
+    z = Z[, ncol(Z):1],
+    breaks = seq(0.5, 6.5, by = 1),
+    col = cols,
+    na.col = "grey80",
+    main = paste0(
+      "N concentration relative to threshold (",
+      thr,
+      " mg N/L): ",
+      case_label
+    ),
+    xlab = "lon",
+    ylab = "lat",
+    axis.args = list(
+      at = 1:6,
+      labels = class_labels
+    )
+  )
+
+  maps::map("world", add = TRUE, col = "black", lwd = 1)
+
+  dev.off()
+
+  # =========================================================
+  # 2) Cumulative N outflow map
+  # =========================================================
+  QoutNint_clipped <- pmin(pmax(QoutNint, 0), 5.0e+08)
+
+  png(
+    filename = file.path(out_dir, paste0("QoutNint_geos_Nbud_", file_suffix, ".png")),
+    width = 1200,
+    height = 800,
+    res = 150
+  )
+
+  fields::image.plot(
+    x = lon_seq,
+    y = lat_seq,
+    z = QoutNint_clipped[, ncol(QoutNint_clipped):1],
+    zlim = c(0, 5.0e+08),
+    col = fields::tim.colors(64),
+    xlab = "lon",
+    ylab = "lat",
+    main = paste0("Cumulative N outflow: ", case_label)
+  )
+
+  maps::map("world", add = TRUE, col = "black", lwd = 1)
+
+  dev.off()
+
+  # =========================================================
+  # 3) Log10 cumulative water outflow map
+  # =========================================================
+  Q_out <- Qout_int
+  Q_out[Q_out <= 0] <- NA
+
+  Q_log <- log10(Q_out)
+
+  zmin_Q <- min(Q_log, na.rm = TRUE)
+  zmax_Q <- max(Q_log, na.rm = TRUE)
+
+  png(
+    filename = file.path(out_dir, paste0("Q_out_log_map_", file_suffix, ".png")),
+    width = 1200,
+    height = 800,
+    res = 150
+  )
+
+  fields::image.plot(
+    x = lon_seq,
+    y = lat_seq,
+    z = Q_log[, ncol(Q_log):1],
+    zlim = c(zmin_Q, zmax_Q),
+    col = fields::tim.colors(64),
+    xlab = "lon",
+    ylab = "lat",
+    main = paste0("Log10 of cumulative water outflow: ", case_label)
+  )
+
+  maps::map("world", add = TRUE, col = "black", lwd = 1)
+
+  dev.off()
+
+  # =========================================================
+  # Summary table
+  # =========================================================
+  conc_summary <- tibble::tibble(
+    case_label = case_label,
+    threshold_mgN_L = thr,
+    n_valid = sum(!is.na(C_fw_mgL)),
+    mean_mgN_L = mean(C_fw_mgL, na.rm = TRUE),
+    median_mgN_L = median(C_fw_mgL, na.rm = TRUE),
+    p90_mgN_L = as.numeric(stats::quantile(C_fw_mgL, 0.90, na.rm = TRUE)),
+    p95_mgN_L = as.numeric(stats::quantile(C_fw_mgL, 0.95, na.rm = TRUE)),
+    max_mgN_L = max(C_fw_mgL, na.rm = TRUE),
+    area_over_threshold_cells = sum(C_fw_mgL > thr, na.rm = TRUE)
+  )
+
+  save(
+    QoutNint,
+    Qout_int,
+    C_fw_ratio,
+    C_fw_mgL,
+    R,
+    Z,
+    conc_summary,
+    file = file.path(out_dir, paste0("C_fw_analysis_", file_suffix, ".rdat"))
+  )
+
+  readr::write_csv(
+    conc_summary,
+    file.path(out_dir, paste0("C_fw_summary_", file_suffix, ".csv"))
+  )
+
+  invisible(list(
+    Qout_int = Qout_int,
+    C_fw_ratio = C_fw_ratio,
+    C_fw_mgL = C_fw_mgL,
+    R = R,
+    Z = Z,
+    summary = conc_summary
+  ))
+}
+
 run_one_case <- function(year, is_mit, nmip3, demo_file,
                          rivnum_matrix, grid_df, riv_table) {
 
+  case_label <- build_case_label(year, is_mit)
+
   visitnl_object_name <- build_visitnl_name(year, is_mit, nmip3)
-  humanN_year <- as.character(year) 
+  humanN_year <- as.character(year)
 
   if (!exists(visitnl_object_name, inherits = TRUE)) {
     stop("No object found: ", visitnl_object_name)
@@ -79,6 +311,7 @@ run_one_case <- function(year, is_mit, nmip3, demo_file,
   e <- new.env(parent = .GlobalEnv)
   e$visitnl_object_name <- visitnl_object_name
   e$humanN_year <- humanN_year
+  e$dat_dir <- get("dat_dir", envir = .GlobalEnv)
 
   message("Running case: ", visitnl_object_name, " / HumanN year = ", humanN_year)
 
@@ -88,6 +321,26 @@ run_one_case <- function(year, is_mit, nmip3, demo_file,
     stop("No object found: test_sim")
   }
 
+  # =========================================================
+  # Concentration analysis
+  # =========================================================
+  conc_result <- analyze_concentration(
+    test_sim = e$test_sim,
+    case_label = case_label,
+    nmip3 = nmip3,
+    out_dir = "output",
+    thr = 2.5
+  )
+
+  assign(
+    paste0("conc_result_", case_label, if (nmip3) "_NMIP3" else ""),
+    conc_result,
+    envir = .GlobalEnv
+  )
+
+  # =========================================================
+  # River-mouth aggregation
+  # =========================================================
   aggregate_river_mouth(
     test_sim = e$test_sim,
     rivnum_matrix = rivnum_matrix,
@@ -271,14 +524,17 @@ make_obs_compare_plot <- function(model_df, nmip3 = FALSE) {
 
   print(p)
 
+  out_dir <- "output"
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
   ggplot2::ggsave(
-    filename = paste0("Obs_compare", suffix_save, ".png"),
+    filename = file.path(out_dir, paste0("Obs_compare", suffix_save, ".png")),
     plot = p,
     width = 6,
     height = 6,
-    dpi = 300
+    dpi = 300,
+    bg = "white"
   )
-
   save(
     metrics,
     file = paste0("obs_compare_metrics", suffix_save, ".rdat")
@@ -369,7 +625,7 @@ df_river_all_mit <- bind_rows(
 suffix_save <- if (NMIP3) "_NMIP3" else ""
 
 save(df_river_all,
-     file = paste0("df_river_all", suffix_save, ".rdat"))
+     file = paste0("Data_pd/df_river_all", suffix_save, ".rdat"))
 
 save(df_river_all_mit,
-     file = paste0("df_river_all_mit", suffix_save, ".rdat"))
+     file = paste0("Data_pd/df_river_all_mit", suffix_save, ".rdat"))
