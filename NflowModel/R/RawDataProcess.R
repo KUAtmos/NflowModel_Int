@@ -1,4 +1,40 @@
-Sys.setenv(PATH = paste(Sys.getenv("PATH"), "C:/GAMS/win64/26.1", sep = ";"))
+# =========================================================
+# GAMS / GDX settings
+# GAMS_DIR is supplied from the shell script.
+# =========================================================
+
+gams_dir <- Sys.getenv("GAMS_DIR", unset = "")
+
+if (!nzchar(gams_dir)) {
+stop(
+"GAMS_DIR is not set.\n",
+"Please set GAMS_DIR in the shell script before running Rscript.\n",
+"Example:\n",
+"  export GAMS_DIR="$HOME/gams39.3_linux_x64_64_sfx""
+)
+}
+
+gams_dir <- normalizePath(
+path.expand(gams_dir),
+winslash = "/",
+mustWork = TRUE
+)
+
+Sys.setenv(
+PATH = paste(gams_dir, Sys.getenv("PATH"), sep = .Platform$path.sep)
+)
+
+if (.Platform$OS.type != "windows") {
+Sys.setenv(
+LD_LIBRARY_PATH = paste(
+gams_dir,
+Sys.getenv("LD_LIBRARY_PATH"),
+sep = .Platform$path.sep
+)
+)
+}
+
+gdxrrw::igdx(gams_dir)
 Sys.which("gams")
 library(dplyr)
 library(tidyr)
@@ -11,8 +47,9 @@ library(stringr)
 library(purrr)
 library(terra)
 
-SCENARIOset = "SSP2_BaU_NoCC"
-YEAR = "2100"
+if (!exists("SCENARIOset")) SCENARIOset <- "SSP2_BaU_NoCC"
+if (!exists("YEAR")) YEAR <- "2010"
+YEAR <- as.character(YEAR)
 SCENARIOset2 <- if (SCENARIOset == "SSP2_BaU_NoCC") {
   "Base"
 } else if (SCENARIOset == "SSP2_500C_CACN_NoCC") {
@@ -1815,131 +1852,4 @@ total_protein_ton <- FAO_liv_protein %>%
 
 total_protein_ton
 
-#VISIToRN input
-    save(OUTleadis, file = "OUTleadis2010.rdat")
-    save(OUTleadis, file = "OUTleadis2030.rdat")
-    save(OUTleadis, file = "OUTleadis2050.rdat")
-    save(OUTleadis, file = "OUTleadis2100.rdat")
-    save(OUTleadis, file = "OUTleadis2030mit.rdat")
-    save(OUTleadis, file = "OUTleadis2050mit.rdat")
-    save(OUTleadis, file = "OUTleadis2100mit.rdat")
-    save(INferdis, file = "INferdis.rdat")
-    save(INmandis, file = "INmandis.rdat")
-    save(OUTcropdis, file = "OUTcropdis.rdat")
-    save(OUTgasdis_N2, file = "OUTgasdis_N2.rdat")
-    save(OUTgasdis_NH3, file = "OUTgasdis_NH3.rdat")
-
-    OUTgasdis_N2O <- OUTgasdis_NOx %>%
-      mutate(OUTgasgrid = OUTgasgrid*4.5/7)
-    OUTgasdis_NO <- OUTgasdis_NOx %>%
-      mutate(OUTgasgrid = OUTgasgrid*2.5/7)
-    save(OUTgasdis_NO, file = "OUTgasdis_NO.rdat")
-    save(OUTgasdis_N2O, file = "OUTgasdis_N2O.rdat")
-    save(OUTresdis, file = "OUTresdis.rdat")
-    save(INdepdis, file = "INdepdis.rdat")
-    save(INfixdis, file = "INfixdis.rdat")
-    save(resampled_df, file = "../data/resampled_df.rdat")
-
-    df_name <- paste0("INferdis", YEAR)
-    assign(
-    df_name,
-    INferdis[INferdis$YEMF == as.integer(YEAR), ]
-    )
-
-    df_name2 <- paste0("INmandis", YEAR)
-    assign(
-    df_name2,
-    INmandis[INmandis$YEMF == as.integer(YEAR), ]
-    )
-
-    df_name3 <- paste0("INdepdis", YEAR)
-    assign(
-    df_name3,
-    INdepdis[INdepdis$YEMF == as.integer(YEAR), ]
-    )
-
-    df_name4 <- paste0("INfixdis", YEAR)
-    assign(
-    df_name4,
-    INfixdis[INfixdis$YEMF == as.integer(YEAR), ]
-    )
-
-    df_name5 <- paste0("OUTcropdis", YEAR)
-    assign(
-    df_name5,
-    OUTcropdis[OUTcropdis$YEMF == as.integer(YEAR), ]
-    )
-
-    df_name6 <- paste0("OUTresdis", YEAR)
-    assign(
-    df_name6,
-    OUTresdis[OUTresdis$YEMF == as.integer(YEAR), ]
-    )
-
-    df_name7 <- paste0("OUTgasdis", YEAR)
-    assign(
-    df_name7,
-    OUTgasdis[OUTgasdis$YEMF == as.integer(YEAR), ]
-    )
-
-    df_name8 <- paste0("OUTleadis", YEAR)
-    assign(
-    df_name8,
-    OUTleadis[OUTleadis$YEMF == as.integer(YEAR), ]
-    )
-
-    INferdis2010 <- INferdis
-    INmandis2010 <- INmandis
-    INdepdis2010 <- INdepdis
-    INfixdis2010 <- INfixdis
-    OUTcropdis2010 <- OUTcropdis
-    OUTresdis2010 <- OUTresdis
-    OUTgasdis2010 <- OUTgasdis
-    OUTleadis2010 <- OUTleadis
-
-    INferdis2030 <- INferdis
-    INmandis2030 <- INmandis
-    INdepdis2030 <- INdepdis
-    INfixdis2030 <- INfixdis
-    OUTcropdis2030 <- OUTcropdis
-    OUTresdis2030 <- OUTresdis
-    OUTgasdis2030 <- OUTgasdis
-    OUTleadis2030 <- OUTleadis
-
-    INferdis2050 <- INferdis
-    INmandis2050 <- INmandis
-    INdepdis2050 <- INdepdis
-    INfixdis2050 <- INfixdis
-    OUTcropdis2050 <- OUTcropdis
-    OUTresdis2050 <- OUTresdis
-    OUTgasdis2050 <- OUTgasdis
-    OUTleadis2050 <- OUTleadis
-
-    INferdis2100 <- INferdis
-    INmandis2100 <- INmandis
-    INdepdis2100 <- INdepdis
-    INfixdis2100 <- INfixdis
-    OUTcropdis2100 <- OUTcropdis
-    OUTresdis2100 <- OUTresdis
-    OUTgasdis2100 <- OUTgasdis
-    OUTleadis2100 <- OUTleadis
-
-    OUTgasdis_NH3_2020 <- OUTgasdis_NH3
-    OUTgasdis_NH3_2010 <- OUTgasdis_NH3
-
-    objs_to_save <- c(
-  "INferdis2010",   "INmandis2010",   "INdepdis2010",   "INfixdis2010",
-  "OUTcropdis2010", "OUTresdis2010",  "OUTgasdis2010",  "OUTleadis2010",
-  "INferdis2030",   "INmandis2030",   "INdepdis2030",   "INfixdis2030",
-  "OUTcropdis2030", "OUTresdis2030",  "OUTgasdis2030",  "OUTleadis2030",
-  "INferdis2050",   "INmandis2050",   "INdepdis2050",   "INfixdis2050",
-  "OUTcropdis2050", "OUTresdis2050",  "OUTgasdis2050",  "OUTleadis2050",
-  "INferdis2100",   "INmandis2100",   "INdepdis2100",   "INfixdis2100",
-  "OUTcropdis2100", "OUTresdis2100",  "OUTgasdis2100",  "OUTleadis2100",
-  "OUTgasdis_NH3_2020", "OUTgasdis_NH3_2010"
-)
-
-for (nm in objs_to_save) {
-  save(list = nm, file = paste0(nm, ".rdat"))
-}
 

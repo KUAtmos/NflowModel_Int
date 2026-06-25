@@ -1,3 +1,33 @@
+current_wd <- getwd()
+current_wd_norm <- normalizePath(current_wd, winslash = "/", mustWork = TRUE)
+
+if (basename(current_wd_norm) != "VISIToRN") {
+  visitorn_dir_candidate <- file.path(current_wd_norm, "../../VISIToRN")
+
+  if (!dir.exists(visitorn_dir_candidate)) {
+    stop(
+      "VISIToRN directory was not found.\n",
+      "Current working directory: ", current_wd_norm, "\n",
+      "Expected VISIToRN path: ", normalizePath(visitorn_dir_candidate, winslash = "/", mustWork = FALSE)
+    )
+  }
+
+  visitorn_dir <- normalizePath(
+    visitorn_dir_candidate,
+    winslash = "/",
+    mustWork = TRUE
+  )
+
+  message("Working directory changed:")
+  message("  from: ", current_wd_norm)
+  message("  to  : ", visitorn_dir)
+
+  setwd(visitorn_dir)
+
+} else {
+  message("Already in VISIToRN directory: ", current_wd_norm)
+}
+
 #Process visit output
 library(dplyr)
 library(tidyr)
@@ -14,7 +44,98 @@ library(ggrepel)
 library(readr)
 library(forcats)
 library(purrr)
-igdx("C:/GAMS/53")
+
+if (.Platform$OS.type == "windows") {
+  gams_dir <- "C:/GAMS/53"
+} else {
+  gams_dir <- normalizePath(
+    path.expand("~/gams39.3_linux_x64_64_sfx"),
+    mustWork = TRUE
+  )
+}
+
+Sys.setenv(
+  PATH = paste(gams_dir, Sys.getenv("PATH"), sep = .Platform$path.sep)
+)
+
+gdxrrw::igdx(gams_dir)
+
+message("GAMS path: ", Sys.which("gams"))
+
+rgdx.param <- function(gdx_file, symbol_name) {
+  x <- gdxrrw::rgdx(
+    gdx_file,
+    list(
+      name = symbol_name,
+      form = "sparse"
+    )
+  )
+
+  df <- as.data.frame(x$val, stringsAsFactors = FALSE)
+
+  if (ncol(df) < 2) {
+    stop("Unexpected GDX parameter format: ", symbol_name)
+  }
+
+  n_dim <- ncol(df) - 1
+
+  if (!is.null(x$domains) && length(x$domains) == n_dim) {
+    names(df)[seq_len(n_dim)] <- x$domains
+  } else {
+    names(df)[seq_len(n_dim)] <- paste0("i", seq_len(n_dim))
+  }
+
+  names(df)[ncol(df)] <- "value"
+
+  df[[symbol_name]] <- df$value
+
+  df
+}
+
+
+rgdx.set <- function(gdx_file, symbol_name) {
+  x <- gdxrrw::rgdx(
+    gdx_file,
+    list(
+      name = symbol_name,
+      form = "sparse"
+    )
+  )
+
+  df <- as.data.frame(x$val, stringsAsFactors = FALSE)
+
+  if (ncol(df) < 1) {
+    stop("Unexpected GDX set format: ", symbol_name)
+  }
+
+  if (ncol(df) >= 2) {
+    last_col <- suppressWarnings(as.numeric(df[[ncol(df)]]))
+
+    if (!all(is.na(last_col)) && all(last_col %in% c(0, 1), na.rm = TRUE)) {
+      df <- df[, -ncol(df), drop = FALSE]
+    }
+  }
+
+  if (!is.null(x$domains) && length(x$domains) == ncol(df)) {
+    names(df) <- x$domains
+  } else {
+    names(df) <- paste0("i", seq_len(ncol(df)))
+  }
+
+  if (symbol_name == "MAP_GIJ" && ncol(df) == 3) {
+    names(df) <- c("G", "I", "J")
+  }
+
+  if (symbol_name == "MAP_RIJ" && ncol(df) == 3) {
+    names(df) <- c("R", "I", "J")
+  }
+
+  if (symbol_name == "MAP_RG" && ncol(df) == 2) {
+    names(df) <- c("R", "G")
+  }
+
+  df
+}
 data_prep <- "data_prep.gdx"
 data_prep_data <- gdxrrw::rgdx(data_prep)
 
@@ -374,8 +495,8 @@ data_prep_data <- gdxrrw::rgdx(data_prep)
         source("Run_VISIToRN.r")
 
 #Visualization
-        load("Data_pd/df_river_all.rdat")
-        load("Data_pd/df_river_all_mit.rdat")
+        load("Data_pd/df_river_all_NMIP3.rdat")
+        load("Data_pd/df_river_all_mit_NMIP3.rdat")
 
         df_base <- df_river_all %>%
           mutate(scenario = "Baseline")
@@ -427,18 +548,23 @@ data_prep_data <- gdxrrw::rgdx(data_prep)
           )
 
 
-        ggplot(df_plot,
-              aes(x = year_f, y = Nload,
-                  color = scenario, group = scenario)) +
+         # output folder
+        out_dir <- "output"
+        dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+        p_river_top14 <- ggplot(
+          df_plot,
+          aes(x = year_f, y = Nload, color = scenario, group = scenario)
+        ) +
           geom_line(linewidth = 0.9) +
           geom_point(size = 1.8) +
           scale_x_discrete(drop = FALSE) +
           scale_y_continuous(
-            limits = c(0, NA) 
+            limits = c(0, NA)
           ) +
           scale_color_manual(values = c(
-            "Baseline"   = "red",
-            "500C" = "cyan3"
+            "Baseline" = "red",
+            "500C"     = "cyan3"
           )) +
           labs(
             x = "Year",
@@ -448,16 +574,14 @@ data_prep_data <- gdxrrw::rgdx(data_prep)
           ) +
           facet_wrap(
             ~ river_basin_name,
-            ncol = 5,  
+            ncol = 5,
             scales = "free_y",
-            labeller = labeller(river_basin_name = river_labels)  
+            labeller = labeller(river_basin_name = river_labels)
           ) +
           theme_bw(base_size = 12) +
           theme(
-          
             panel.grid.major = element_blank(),
             panel.grid.minor = element_blank(),
-          
             panel.border     = element_blank(),
             axis.line        = element_line(colour = "black"),
             axis.text.x      = element_text(angle = 45, hjust = 1),
@@ -466,351 +590,13 @@ data_prep_data <- gdxrrw::rgdx(data_prep)
             strip.text       = element_text(face = "bold")
           )
 
-#Compare with observation (He et al.)
-obs_raw <- read_csv("River_Nitrogen_Load_Data.csv", show_col_types = FALSE, guess_max = 100000)
+        print(p_river_top14)
 
-
-names(obs_raw) <- str_replace_all(names(obs_raw), "\\s+", "_")
-
-name_col <- names(obs_raw)[str_detect(names(obs_raw), regex("^name$", ignore_case = TRUE))]
-if (length(name_col) == 0) name_col <- names(obs_raw)[1]
-
-
-din_col <- names(obs_raw)[str_detect(names(obs_raw), regex("DIN", ignore_case = TRUE))]
-if (length(din_col) == 0) {
-  stop("観測CSVに DIN を含む列が見つかりません。列名をご確認ください。")
-}
-
-obs <- obs_raw %>%
-  transmute(
-    obs_name = trimws(.data[[name_col]]),
-    DIN_load = suppressWarnings(as.numeric(.data[[din_col[1]]]))
-  )
-
-lines <- readLines("River_obs_analysis.txt", encoding = "UTF-8")
-lines <- lines[nzchar(trimws(lines))]                       
-lines <- lines[!str_starts(trimws(lines), "#")]          
-
-split2 <- strsplit(lines, ",")
-map <- tibble(
-  csv_name = trimws(vapply(split2, `[`, character(1), 1)),
-  df_name  = trimws(vapply(split2, `[`, character(1), 2))
-)
-
-map <- map %>% filter(csv_name != "", df_name != "")
-
-model <- df_river_named_mouth_2010 %>%
-  transmute(
-    df_name = trimws(river_basin_name),
-    Nload   = as.numeric(Nload/1000000)
-  )
-
-dat_raw <- obs %>%
-  rename(csv_name = obs_name) %>%        
-  inner_join(map, by = "csv_name") %>%
-  inner_join(model, by = "df_name") %>%
-  transmute(
-    csv_name,
-    df_name,
-    DIN_load_kt = as.numeric(DIN_load),     
-    Nload_kt    = as.numeric(Nload)      
-  ) %>%
-  filter(!is.na(DIN_load_kt), !is.na(Nload_kt))
-
-
-dat <- dat_raw %>%
-  group_by(csv_name) %>%
-  summarise(
-    DIN_load_kt = first(DIN_load_kt),             
-    Nload_kt    = sum(Nload_kt, na.rm = TRUE),       
-    n_sources   = n(),
-    merged_from = paste(unique(df_name), collapse = " + "),
-    .groups = "drop"
-  )
-
-dat_pos <- dat %>% filter(DIN_load_kt > 0, Nload_kt > 0)
-
-label_top <- dat_pos %>%
-  mutate(ratio = Nload_kt / DIN_load_kt,
-         dev = abs(log10(ratio))) %>%
-  slice_max(dev, n = 20)
-
-lbl_num <- if (exists("cut_short_scale", where = asNamespace("scales"))) {
-  scales::label_number(scale_cut = scales::cut_short_scale())
-} else {
-  scales::label_number()
-}
-
-all_vals <- c(dat_pos$DIN_load_kt, dat_pos$Nload_kt)
-all_vals <- all_vals[is.finite(all_vals) & all_vals > 0]
-lo <- 10^floor(log10(min(all_vals)))
-hi <- 10^ceiling(log10(max(all_vals)))
-
-fit <- lm(log10(Nload_kt) ~ log10(DIN_load_kt), data = dat_pos)
-a  <- unname(coef(fit)[1]); b <- unname(coef(fit)[2])
-r2 <- summary(fit)$r.squared
-
-xnew <- data.frame(DIN_load_kt = 10^seq(log10(lo), log10(hi), length.out = 200))
-pr   <- predict(fit, newdata = xnew, se.fit = TRUE)
-df_line <- transform(
-  xnew,
-  y_fit = 10^pr$fit,
-  y_lo  = 10^(pr$fit - 1.96*pr$se.fit),
-  y_hi  = 10^(pr$fit + 1.96*pr$se.fit)
-)
-
-p <- ggplot(dat_pos, aes(x = DIN_load_kt, y = Nload_kt)) +
-  geom_point(alpha = 0.85, size = 2) +
-  geom_function(fun = function(x) x) +
-  geom_function(fun = function(x) 2 * x, linetype = "dashed") +
-  geom_function(fun = function(x) 0.5 * x, linetype = "dashed") +
-  ggrepel::geom_text_repel(
-    data = label_top, aes(label = csv_name),
-    size = 3, max.overlaps = 100
-  ) +
-  geom_ribbon(data = df_line,
-              aes(x = DIN_load_kt, ymin = y_lo, ymax = y_hi),
-              alpha = 0.12, inherit.aes = FALSE) +
-  geom_line(data = df_line,
-            aes(x = DIN_load_kt, y = y_fit),
-            linewidth = 1, inherit.aes = FALSE) +
-scale_x_log10(limits = c(lo, hi), labels = lbl_num, name = "Observed N load (kt N yr-1)",
-              expand = ggplot2::expansion(mult = 0.02)) +
-scale_y_log10(limits = c(lo, hi), labels = lbl_num, name = "Simulated N load (kt N yr-1)",
-              expand = ggplot2::expansion(mult = 0.02)) +
-coord_equal() +   
-  theme_bw(base_size = 12) +
-  ggtitle("河川ごとの窒素負荷の本研究における推計値および観測値（He et al., 2011）（kt-N）",
-          subtitle = "実線: 1:1, 破線: ×2 / ×0.5")
-
-print(p)
-
-ggsave("260120Obs_compare.png", p, width = 6, height = 6, dpi = 300)
-
-    #index
-calc_metrics <- function(df, obs_col = "DIN_load_kt", mod_col = "Nload_kt") {
-
-  dat <- df %>%
-    transmute(
-      O = as.numeric(.data[[obs_col]]),
-      M = as.numeric(.data[[mod_col]])
-    ) %>%
-    filter(is.finite(O), is.finite(M), O > 0, M > 0)
-
-  e  <- dat$M - dat$O
-  pe <- 100 * e / dat$O  
-  ape <- abs(pe)   
-
-  fit_lin <- lm(M ~ O, data = dat)
-  R2      <- summary(fit_lin)$r.squared
-  RMSE    <- sqrt(mean(e^2))
-  MAE     <- mean(abs(e))
-  NRMSE_meanO     <- RMSE / mean(dat$O)
-  NRMSE_meanO_pct <- 100 * NRMSE_meanO
-  MAPE  <- mean(ape)                    
-  MdAPE <- median(ape)       
-  MPE   <- mean(pe)               
-  PBIAS <- 100 * sum(e) / sum(dat$O)  
-  fit_log <- lm(log10(M) ~ log10(O), data = dat)
-  R2_log10   <- summary(fit_log)$r.squared
-  RMSE_log10 <- sqrt(mean((log10(dat$M) - log10(dat$O))^2))
-  typical_factor_from_RMSElog10 <- 10^RMSE_log10
-  tibble::tibble(
-    n = nrow(dat),
-    R2 = R2,
-    RMSE = RMSE,
-    MAE = MAE,
-    NRMSE_meanO = NRMSE_meanO,
-    NRMSE_meanO_pct = NRMSE_meanO_pct,
-    MAPE = MAPE,
-    MdAPE = MdAPE,
-    MPE = MPE,
-    PBIAS = PBIAS,
-    R2_log10 = R2_log10,
-    RMSE_log10 = RMSE_log10,
-    typical_factor_from_RMSElog10 = typical_factor_from_RMSElog10
-  )
-}
-
-metrics <- calc_metrics(dat_pos)
-metrics
-
-#Sewage
-    load("Data_pd/HumanN.rdat")
-    Global <- "Data_pd/SSP_update.gdx" #input data
-    Global_data <- gdxrrw::rgdx(Global)
-    GDP <- rgdx.param(Global, 'GDP')
-    POP <- rgdx.param(Global, 'POP')
-
-    regionSSP.map <- read.delim("Data_pd/regionSSP.map", 
-                                header = FALSE, 
-                                stringsAsFactors = FALSE)
-    regionSSP.map <- regionSSP.map[, c(1,3)]
-
-
-    colnames(regionSSP.map) <- c("country", "region")
-
-    IAMC_Template_GDP <- GDP %>%
-      left_join(regionSSP.map, by = c("i1" = "country")) %>%
-      select(-i1) %>%
-      select(-i3) %>%
-      rename(SCENARIO = i2) %>%
-      rename(YEMF = i4) %>%
-      rename(REMF = region) %>%
-      rename(IAMC_Template = value)
-
-    IAMC_Template_GDP <- IAMC_Template_GDP %>%
-      filter(YEMF %in% c(2005, seq(2010, 2100, by = 10))) %>%
-      filter(SCENARIO == "SSP2")
-
-    IAMC_Template_POP <- POP %>%
-      left_join(regionSSP.map, by = c("i1" = "country")) %>%
-      select(-i1) %>%
-      select(-i3) %>%
-      rename(SCENARIO = i2) %>%
-      rename(YEMF = i4) %>%
-      rename(REMF = region) %>%
-      rename(IAMC_Template = value)
-
-    IAMC_Template_POP <- IAMC_Template_POP %>%
-      filter(YEMF %in% c(2005, seq(2010, 2100, by = 10))) %>%
-      filter(SCENARIO == "SSP2")
-
-    MAP_RIJ <- rgdx.set(data_prep, 'MAP_RIJ')
-    MAP_RIJ$I <- as.numeric(as.character(MAP_RIJ$I))
-    MAP_RIJ$J <- as.numeric(as.character(MAP_RIJ$J))
-    MAP_RIJ <- MAP_RIJ %>%
-    rename(REMF = R)
-
-    POPratio <- IAMC_Template_POP %>%
-      left_join(MAP_RIJ, by = "REMF")
-
-    base2010 <- POPratio %>%
-      filter(YEMF == 2010) %>%
-      group_by(SCENARIO, REMF, I, J) %>%
-      summarise(pop2010 = sum(IAMC_Template, na.rm = TRUE), .groups = "drop")
-
-    POPratio_rel2010 <- POPratio %>%
-      group_by(SCENARIO, REMF, I, J, YEMF) %>%
-      summarise(pop = sum(IAMC_Template, na.rm = TRUE), .groups = "drop") %>%
-      left_join(base2010, by = c("SCENARIO","REMF","I","J")) %>%
-      mutate(pop_ratio_2010 = if_else(is.na(pop2010) | pop2010 <= 0, NA_real_, pop / pop2010)) %>%
-      arrange(SCENARIO, REMF, I, J, YEMF)
-
-
-    SCNR <- IAMC_Template_GDP %>%
-      mutate(
-        SC = 22.969 * log(IAMC_Template * 1000) - 162.12,
-        NR = 0.0013 * IAMC_Template * 1000 - 2.9578
-      ) %>%
-      mutate(
-        SC = pmin(SC, 100),
-        NR = pmin(NR, 90)
-      )
-
-    SCratio <- SCNR %>%
-      left_join(MAP_RIJ, by = "REMF")
-
-    SC2010 <- SCratio %>%
-      filter(YEMF == 2010) %>%
-      group_by(SCENARIO, REMF, I, J) %>%
-      summarise(sc2010 = sum(SC, na.rm = TRUE), .groups = "drop")
-
-    SCratio_rel2010 <- SCratio %>%
-      group_by(SCENARIO, REMF, I, J, YEMF) %>%
-      summarise(sc = sum(SC, na.rm = TRUE), .groups = "drop") %>%
-      left_join(SC2010, by = c("SCENARIO","REMF","I","J")) %>%
-      mutate(sc_ratio_2010 = if_else(is.na(sc2010) | sc2010 <= 0, NA_real_, sc / sc2010)) %>%
-      arrange(SCENARIO, REMF, I, J, YEMF)
-
-    NR2010 <- SCratio %>%
-      filter(YEMF == 2010) %>%
-      group_by(SCENARIO, REMF, I, J) %>%
-      summarise(nr2010 = sum(NR, na.rm = TRUE), .groups = "drop")
-
-    NRratio_rel2010 <- SCratio %>%
-      group_by(SCENARIO, REMF, I, J, YEMF) %>%
-      summarise(nr = sum(NR, na.rm = TRUE), .groups = "drop") %>%
-      left_join(NR2010, by = c("SCENARIO","REMF","I","J")) %>%
-      mutate(nr_ratio_2010 = if_else(is.na(nr2010) | nr2010 <= 0, NA_real_, nr / nr2010)) %>%
-      arrange(SCENARIO, REMF, I, J, YEMF)
-
-    base2010 <- HumanN[,,50]
-    stopifnot(nrow(base2010) == 720, ncol(base2010) == 360)
-
-    target_years <- c(2010, 2030, 2050, 2100)
-
-    make_future_map <- function(scn, year,
-                                base_mat = HumanN[,,50],
-                                POPratio_rel2010,
-                                SCratio_rel2010,
-                                NRratio_rel2010) {
-      if (year == 2010) {
-        return(base_mat)
-      }
-
-      eps <- 1e-6
-
-      # --- POP: POPfuture / POP2010 ---
-      popY <- POPratio_rel2010 %>%
-        dplyr::filter(SCENARIO == scn, YEMF == year) %>%
-        dplyr::select(I, J, pop, pop2010) %>%
-        dplyr::mutate(
-          pop      = pmax(pop, 0),
-          pop2010  = pmax(pop2010, 0),
-          pop_ratio = ifelse(pop2010 > 0, pop / pmax(pop2010, eps), 1)
-        ) %>%
-        dplyr::distinct(I, J, .keep_all = TRUE)
-
-      # --- SC ---
-      scY <- SCratio_rel2010 %>%
-        dplyr::filter(SCENARIO == scn, YEMF == year) %>%
-        dplyr::select(I, J, sc) %>%
-        dplyr::mutate(
-          sc = pmin(pmax(sc, 0), 100) / 100  # % → 小数
-        ) %>%
-        dplyr::distinct(I, J, .keep_all = TRUE)
-
-      # --- NR ---
-      nrY <- NRratio_rel2010 %>%
-        dplyr::filter(SCENARIO == scn, YEMF == year) %>%
-        dplyr::select(I, J, nr) %>%
-        dplyr::mutate(
-          nr = pmin(pmax(nr, 0), 100) / 100  # % → 小数
-        ) %>%
-        dplyr::distinct(I, J, .keep_all = TRUE)
-
-      df <- popY %>%
-        dplyr::full_join(scY, by = c("I", "J")) %>%
-        dplyr::full_join(nrY, by = c("I", "J")) %>%
-        dplyr::filter(I >= 1, I <= 720, J >= 1, J <= 360) %>%
-        dplyr::mutate(
-          pop_ratio = dplyr::coalesce(pop_ratio, 1),
-          sc        = dplyr::coalesce(sc, 0),
-          nr        = dplyr::coalesce(nr, 0),
-          mult_no    = pop_ratio * pmax(1 - sc, 0),
-          mult_sewer = pop_ratio * sc * pmax(1 - nr, 0),
-          mult = mult_no + mult_sewer
+        ggsave(
+          filename = file.path(out_dir, paste0("River_Nload_top14", suffix_save, ".png")),
+          plot = p_river_top14,
+          width = 12,
+          height = 8,
+          dpi = 300,
+          bg = "white"
         )
-      mult_mat <- matrix(1, nrow = 720, ncol = 360)
-      mult_mat[cbind(df$I, df$J)] <- df$mult
-
-      base_mat * mult_mat
-    }
-
-    scenarios <- sort(unique(POPratio_rel2010$SCENARIO))
-    HumanN_future <- setNames(vector("list", length(scenarios)), scenarios)
-
-    for (scn in scenarios) {
-      HumanN_future[[scn]] <- setNames(vector("list", length(target_years)),
-                                      as.character(target_years))
-      for (yr in target_years) {
-        HumanN_future[[scn]][[as.character(yr)]] <-
-          make_future_map(scn = scn, year = yr,
-                          POPratio_rel2010 = POPratio_rel2010,
-                          SCratio_rel2010  = SCratio_rel2010,
-                          NRratio_rel2010  = NRratio_rel2010)
-      }
-    }
-
-    save(HumanN_future, file = "Data_pd/HumanN_future.rdat")
