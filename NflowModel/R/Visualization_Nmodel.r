@@ -180,11 +180,11 @@ select <- dplyr::select
         labeller = as_labeller(region_lab) 
     ) +
     labs(
-        title = "NH3 emissions by region (2010)",
+        title = expression(NH[3]~"emissions by region (2020)"),
         x     = "",
-        y     = "NH3 emissions (Tg N/yr)"
+        y     = expression(NH[3]~"emissions (Tg N/yr)")
     ) +
-    theme_bw(base_size = 14) +
+    theme_bw(base_size = 16) +
     theme(
         panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
@@ -201,11 +201,11 @@ select <- dplyr::select
         labeller = as_labeller(region_lab)
     ) +
     labs(
-        title = "NH3 emissions by region (2020)",
+        title = expression(NH[3]~"emissions by region (2020)"),
         x     = "",
-        y     = "NH3 emissions (Tg N/yr)"
+        y     = expression(NH[3]~"emissions (Tg N/yr)")
     ) +
-    theme_bw(base_size = 14) +
+    theme_bw(base_size = 16) +
     theme(
         panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
@@ -225,11 +225,11 @@ select <- dplyr::select
         ~ region, scales = "free_y"
     ) +
     labs(
-        title = "NH3 emissions by region (2010)",
+        title = expression(NH[3]~"emissions by region (2010)"),
         x     = "",
-        y     = "NH3 emissions (Tg N/yr)"
+        y     = expression(NH[3]~"emissions (Tg N/yr)")
     ) +
-    theme_bw(base_size = 14) +
+    theme_bw(base_size = 16) +
     theme(
         panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
@@ -245,11 +245,11 @@ select <- dplyr::select
         ~ region, scales = "free_y"
     ) +
     labs(
-        title = "NH3 emissions by region (2020)",
+        title = expression(NH[3]~"emissions by region (2020)"),
         x     = "",
-        y     = "NH3 emissions (Tg N/yr)"
+        y     = expression(NH[3]~"emissions (Tg N/yr)")
     ) +
-    theme_bw(base_size = 14) +
+    theme_bw(base_size = 16) +
     theme(
         panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
@@ -533,119 +533,241 @@ map_lat_max <-  70
     })
     }
 
-    save_input_total_plot <- function(Input_R_df, outfile) {
-    df_input_long <- Input_R_df %>%
-        pivot_longer(
-        cols = starts_with("Input"),
-        names_to = "Year",
-        values_to = "Value"
-        ) %>%
-        mutate(
-        Year = stringr::str_remove(Year, "Input") %>% as.integer()
-        ) %>%
-        format_region_labels()
+theme_region_bar <- function(base_size = 14) {
+  theme_bw(base_size = base_size) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
 
-    Input_main <- ggplot(
-        df_input_long,
-        aes(x = factor(Year), y = Value, fill = factor(Year))
+      panel.border = element_rect(
+        color = "black",
+        fill = NA,
+        linewidth = 0.5
+      ),
+
+      strip.background = element_rect(
+        fill = "grey90",
+        color = "black",
+        linewidth = 0.4
+      ),
+      strip.text = element_text(
+        size = base_size,
+        face = "bold"
+      ),
+
+      axis.text.x = element_text(
+        angle = 45,
+        hjust = 1,
+        vjust = 1,
+        size = base_size * 1.6
+      ),
+      axis.text.y = element_text(
+        size = base_size * 1.6
+      ),
+
+      axis.title.x = element_text(
+        size = base_size * 2.0
+      ),
+      axis.title.y = element_text(
+        size = base_size * 1.6
+      ),
+
+      legend.position = "right",
+      legend.direction = "vertical",
+
+      legend.title = element_text(
+        size = base_size * 1.6
+      ),
+      legend.text = element_text(
+        size = base_size * 1.6
+      ),
+
+      legend.key.size = grid::unit(0.9, "cm"),
+      legend.box.margin = margin(0, 0, 0, 5, "mm")
+    )
+}
+
+add_region_facet_label <- function(df, label_mode = c("name", "code")) {
+  label_mode <- match.arg(label_mode)
+
+  if (label_mode == "name") {
+    df %>%
+      format_region_labels() %>%
+      dplyr::rename(R_plot = R)
+  } else {
+    df %>%
+      dplyr::mutate(R_plot = R)
+  }
+}
+
+save_input_total_plot <- function(Input_R_df,
+                                  outfile,
+                                  label_mode = c("name", "code")) {
+
+  label_mode <- match.arg(label_mode)
+
+  df_input_long <- Input_R_df %>%
+    tidyr::pivot_longer(
+      cols = starts_with("Input"),
+      names_to = "Year",
+      values_to = "Value"
+    ) %>%
+    dplyr::mutate(
+      Year = stringr::str_remove(Year, "Input") %>% as.integer(),
+      Year = factor(Year, levels = c(2010, 2030, 2050, 2100))
+    ) %>%
+    add_region_facet_label(label_mode = label_mode)
+
+  Input_main <- ggplot(
+    df_input_long,
+    aes(x = Year, y = Value, fill = Year)
+  ) +
+    geom_col(width = 0.7) +
+    facet_wrap(
+      ~ R_plot,
+      scales = "free_y",
+      ncol = 5
     ) +
-        geom_bar(stat = "identity", width = 0.7) +
-        facet_wrap(~ R, scales = "free_y", ncol = 5) +
-        labs(
-        x = "Year",
-        y = "Nitrogen Input (Tg N/yr)"
-        ) +
-        scale_fill_brewer(palette = "Set2", guide = "none") +
-        theme_minimal() +
-        theme(
-        strip.background = element_rect(fill = "gray85", color = NA),
-        strip.text = element_text(size = 23),
-        axis.text.x = element_text(size = 27, angle = 45, hjust = 1, vjust = 1),
-        axis.text.y = element_text(size = 28),
-        axis.title = element_text(size = 36),
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank()
-        )
-
-    ggsave(outfile, plot = Input_main, width = 14, height = 14, dpi = 500)
-    }
-
-    save_input_stacked_plot <- function(df_input_long_comp, outfile) {
-    df_plot <- df_input_long_comp %>%
-        format_region_labels() %>%
-        mutate(
-        Year = factor(Year, levels = c(2010, 2030, 2050, 2100)),
-        source = factor(
-            source,
-            levels = c("Fertilizer", "Manure", "Deposition", "Fixation")
-        )
-        )
-
-    Input_stacked <- ggplot(
-        df_plot,
-        aes(x = Year, y = Value, fill = source)
+    labs(
+      title = "Nitrogen input by region",
+      x = "",
+      y = "Nitrogen input (Tg N yr⁻¹)"
     ) +
-        geom_col(width = 0.7) +
-        facet_wrap(~ R, scales = "free_y", ncol = 5) +
-        labs(
-        x = "Year",
-        y = "Nitrogen Input (Tg N/yr)",
-        fill = "Source"
-        ) +
-        scale_fill_brewer(palette = "Set2") +
-        theme_minimal() +
-        theme(
-        strip.background = element_rect(fill = "gray85", color = NA),
-        strip.text = element_text(size = 23),
-        axis.text.x = element_text(size = 27, angle = 45, hjust = 1, vjust = 1),
-        axis.text.y = element_text(size = 28),
-        axis.title = element_text(size = 36),
-        legend.title = element_text(size = 28),
-        legend.text = element_text(size = 24),
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank()
-        )
-
-    ggsave(outfile, plot = Input_stacked, width = 17, height = 12, dpi = 500)
-    }
-
-    save_output_stacked_plot <- function(df_output_long_comp, outfile) {
-    df_plot <- df_output_long_comp %>%
-        mutate(
-        Year = factor(Year, levels = c(2010, 2030, 2050, 2100)),
-        source = factor(
-            source,
-            levels = c("Crop uptake", "Residues", "Gaseous loss", "Leaching loss")
-        )
-        )
-
-    OUT_stacked_code <- ggplot(
-        df_plot,
-        aes(x = Year, y = Value, fill = source)
+    scale_fill_brewer(
+      palette = "Set2",
+      guide = "none"
     ) +
-        geom_col(width = 0.7) +
-        facet_wrap(~ R, scales = "free_y", ncol = 5) +
-        labs(
-        x = "Year",
-        y = "Nitrogen Output (Tg N/yr)",
-        fill = "Component"
-        ) +
-        scale_fill_brewer(palette = "Set2") +
-        theme_minimal() +
-        theme(
-        strip.background = element_rect(fill = "gray85", color = NA),
-        strip.text = element_text(size = 23),
-        axis.text.x = element_text(size = 24, angle = 45, hjust = 1, vjust = 1),
-        axis.text.y = element_text(size = 28),
-        axis.title = element_text(size = 36),
-        legend.title = element_text(size = 28),
-        legend.text = element_text(size = 24),
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank()
-        )
+    scale_y_continuous(
+      limits = c(0, NA),
+      expand = expansion(mult = c(0, 0.05))
+    ) +
+    theme_region_bar(base_size = 14)
 
-    ggsave(outfile, plot = OUT_stacked_code, width = 14, height = 10, dpi = 500)
-    }
+  ggsave(
+    outfile,
+    plot = Input_main,
+    width = 14,
+    height = 8,
+    dpi = 300,
+    bg = "white"
+  )
+}
+
+save_input_stacked_plot <- function(df_input_long_comp,
+                                    outfile,
+                                    label_mode = c("name", "code")) {
+
+  label_mode <- match.arg(label_mode)
+
+  df_plot <- df_input_long_comp %>%
+    dplyr::mutate(
+      Year = factor(
+        Year,
+        levels = c(2010, 2030, 2050, 2100)
+      ),
+      source = factor(
+        source,
+        levels = c(
+          "Fertilizer",
+          "Manure",
+          "Deposition",
+          "Fixation"
+        )
+      )
+    ) %>%
+    add_region_facet_label(label_mode = label_mode)
+
+  Input_stacked <- ggplot(
+    df_plot,
+    aes(x = Year, y = Value, fill = source)
+  ) +
+    geom_col(width = 0.7) +
+    facet_wrap(
+      ~ R_plot,
+      scales = "free_y",
+      ncol = 5
+    ) +
+    labs(
+      x = "",
+      y = "Nitrogen input (Tg N yr⁻¹)",
+      fill = "Component"
+    ) +
+    scale_fill_brewer(
+      palette = "Set2"
+    ) +
+    scale_y_continuous(
+      limits = c(0, NA),
+      expand = expansion(mult = c(0, 0.05))
+    ) +
+    theme_region_bar(base_size = 14)
+
+  ggsave(
+    outfile,
+    plot = Input_stacked,
+    width = 14,
+    height = 8,
+    dpi = 300,
+    bg = "white"
+  )
+}
+
+save_output_stacked_plot <- function(df_output_long_comp,
+                                     outfile,
+                                     label_mode = c("name", "code")) {
+
+  label_mode <- match.arg(label_mode)
+
+  df_plot <- df_output_long_comp %>%
+    dplyr::mutate(
+      Year = factor(
+        Year,
+        levels = c(2010, 2030, 2050, 2100)
+      ),
+      source = factor(
+        source,
+        levels = c(
+          "Crop uptake",
+          "Residues",
+          "Gaseous loss",
+          "Leaching loss"
+        )
+      )
+    ) %>%
+    add_region_facet_label(label_mode = label_mode)
+
+  OUT_stacked <- ggplot(
+    df_plot,
+    aes(x = Year, y = Value, fill = source)
+  ) +
+    geom_col(width = 0.7) +
+    facet_wrap(
+      ~ R_plot,
+      scales = "free_y",
+      ncol = 5
+    ) +
+    labs(
+      x = "",
+      y = "Nitrogen output (Tg N yr⁻¹)",
+      fill = "Component"
+    ) +
+    scale_fill_brewer(
+      palette = "Set2"
+    ) +
+    scale_y_continuous(
+      limits = c(0, NA),
+      expand = expansion(mult = c(0, 0.05))
+    ) +
+    theme_region_bar(base_size = 14)
+
+  ggsave(
+    outfile,
+    plot = OUT_stacked,
+    width = 14,
+    height = 8,
+    dpi = 300,
+    bg = "white"
+  )
+}
 
     Input_R_BaU <- build_Input_R(
     scenario_tag = "BaU",
@@ -709,35 +831,69 @@ map_lat_max <-  70
     use_BaU2010_for_missing = TRUE
     )
 
-    save_input_total_plot(
-    Input_R_BaU,
-    "../output/Input_17_revised2.png"
-    )
+# ============================================================
+# Baseline: Input components
+# ============================================================
 
-    save_input_stacked_plot(
-    df_input_long_comp_BaU,
-    "../output/Input_17_stacked_components.png"
-    )
+save_input_stacked_plot(
+  df_input_long_comp_BaU,
+  "../output/Input_17_stacked_components.png",
+  label_mode = "name"
+)
 
-    save_output_stacked_plot(
-    df_output_long_comp_BaU,
-    "../output/Output_17_finalrep.png"
-    )
+save_input_stacked_plot(
+  df_input_long_comp_BaU,
+  "../output/Input_17_stacked_components_code.png",
+  label_mode = "code"
+)
 
-    save_input_total_plot(
-    Input_R_500C,
-    "../output/Input_17_revised2_500C.png"
-    )
+# ============================================================
+# Baseline: Output components
+# ============================================================
 
-    save_input_stacked_plot(
-    df_input_long_comp_500C,
-    "../output/Input_17_stacked_components_500C.png"
-    )
+save_output_stacked_plot(
+  df_output_long_comp_BaU,
+  "../output/Output_17_finalrep.png",
+  label_mode = "name"
+)
 
-    save_output_stacked_plot(
-    df_output_long_comp_500C,
-    "../output/Output_17_finalrep_500C.png"
-    )
+save_output_stacked_plot(
+  df_output_long_comp_BaU,
+  "../output/Output_17_finalrep_code.png",
+  label_mode = "code"
+)
+
+# ============================================================
+# 500C: Input components
+# ============================================================
+
+save_input_stacked_plot(
+  df_input_long_comp_500C,
+  "../output/Input_17_stacked_components_500C.png",
+  label_mode = "name"
+)
+
+save_input_stacked_plot(
+  df_input_long_comp_500C,
+  "../output/Input_17_stacked_components_500C_code.png",
+  label_mode = "code"
+)
+
+# ============================================================
+# 500C: Output components
+# ============================================================
+
+save_output_stacked_plot(
+  df_output_long_comp_500C,
+  "../output/Output_17_finalrep_500C.png",
+  label_mode = "name"
+)
+
+save_output_stacked_plot(
+  df_output_long_comp_500C,
+  "../output/Output_17_finalrep_500C_code.png",
+  label_mode = "code"
+)
 
 #Distribution
 # ------------------------------------------------------------
@@ -884,64 +1040,6 @@ make_plot_window_moll <- function(
 
 plot_window_moll <- make_plot_window_moll()
 
-# ------------------------------------------------------------
-# Full-globe Mollweide boundary (for white ellipse fill)
-# ------------------------------------------------------------
-make_globe_boundary_lonlat <- function(
-    lon_min = -180,
-    lon_max = 180,
-    lat_min = -89.999,
-    lat_max =  89.999,
-    n = 500
-) {
-  top <- cbind(
-    seq(lon_min, lon_max, length.out = n),
-    rep(lat_max, n)
-  )
-
-  right <- cbind(
-    rep(lon_max, n),
-    seq(lat_max, lat_min, length.out = n)
-  )
-
-  bottom <- cbind(
-    seq(lon_max, lon_min, length.out = n),
-    rep(lat_min, n)
-  )
-
-  left <- cbind(
-    rep(lon_min, n),
-    seq(lat_min, lat_max, length.out = n)
-  )
-
-  coords <- rbind(
-    top,
-    right,
-    bottom,
-    left,
-    top[1, , drop = FALSE]
-  )
-
-  sf::st_sfc(
-    sf::st_polygon(list(coords)),
-    crs = crs_lonlat
-  )
-}
-
-globe_boundary_lonlat <- make_globe_boundary_lonlat()
-
-globe_boundary_moll <- sf::st_transform(
-  globe_boundary_lonlat,
-  crs = crs_moll
-)
-
-map_boundary_lonlat <- make_map_boundary_lonlat()
-
-map_boundary_moll <- sf::st_transform(
-  map_boundary_lonlat,
-  crs = crs_moll
-)
-
 get_case_object <- function(prefix, scenario_tag, year) {
   obj_name <- paste0(prefix, "_", scenario_tag, "_", year)
 
@@ -956,18 +1054,26 @@ check_map_objects <- function() {
   required <- c(
     "MAP_GIJ",
     "gridarea2",
+
     "Inputdis_BaU_2010",
-    "Inputdis_BaU_2100",
-    "Inputdis_500C_2100",
+    "Inputdis_BaU_2050",
+    "Inputdis_500C_2050",
+
     "OUTgasdis_BaU_2010",
-    "OUTgasdis_BaU_2100",
-    "OUTgasdis_500C_2100",
+    "OUTgasdis_BaU_2050",
+    "OUTgasdis_500C_2050",
+
     "OUTleadis_BaU_2010",
-    "OUTleadis_BaU_2100",
-    "OUTleadis_500C_2100",
+    "OUTleadis_BaU_2050",
+    "OUTleadis_500C_2050",
+
+    "OUTcropdis_BaU_2010",
+    "OUTcropdis_BaU_2050",
+    "OUTcropdis_500C_2050",
+
     "VY_load2_BaU_2010",
-    "VY_load2_BaU_2100",
-    "VY_load2_500C_2100"
+    "VY_load2_BaU_2050",
+    "VY_load2_500C_2050"
   )
 
   missing <- required[
@@ -1141,6 +1247,30 @@ make_outlea_map_df <- function(scenario_tag, year) {
   OUTleadismap
 }
 
+make_outcrop_map_df <- function(scenario_tag, year) {
+  year <- as.integer(year)
+
+  OUTcropdis_case <- get_case_object("OUTcropdis", scenario_tag, year)
+
+  OUTcropdismap <- OUTcropdis_case %>%
+    dplyr::left_join(MAP_GIJ, by = "G") %>%
+    dplyr::filter(YEMF == year) %>%
+    dplyr::select(G, YEMF, CropN, lat, lon) %>%
+    dplyr::left_join(gridarea2, by = c("lat", "lon")) %>%
+    dplyr::mutate(
+      CropN = if_else(
+        is.na(area) | area <= 0,
+        NA_real_,
+        CropN * 1000000 / area
+      ),
+      x = 0.5 * lon - 180.25,
+      y = -0.5 * lat + 90.25
+    ) %>%
+    dplyr::select(CropN, x, y)
+
+  OUTcropdismap
+}
+
 # ------------------------------------------------------------
 # Reproject regular 0.5-degree grid to Mollweide
 # ------------------------------------------------------------
@@ -1160,7 +1290,7 @@ project_grid_to_mollweide <- function(
 
   if (length(missing_cols) > 0) {
     stop(
-      "必要な列がありません: ",
+      "No columns: ",
       paste(missing_cols, collapse = ", ")
     )
   }
@@ -1523,6 +1653,97 @@ plot_leaching_map <- function(
     )
 }
 
+plot_outcrop_map <- function(
+    df,
+    legend_title = expression(
+      atop(
+        "Crop N uptake",
+        group("(", kg~N~ha^{-1}~yr^{-1}, ")")
+      )
+    )
+) {
+  custom_colors <- c("#f7fbff", "#91cf60", "#1a9850")
+
+  ggplot() +
+    geom_sf(
+      data = mollweide_ellipse,
+      fill = "white",
+      color = NA,
+      inherit.aes = FALSE
+    ) +
+    geom_raster(
+      data = df,
+      aes(x = x, y = y, fill = CropN)
+    ) +
+    geom_sf(
+      data = graticule_moll,
+      color = "grey70",
+      linewidth = 0.25,
+      inherit.aes = FALSE
+    ) +
+    geom_sf(
+      data = world_moll,
+      fill = NA,
+      color = "grey50",
+      linewidth = 0.15,
+      inherit.aes = FALSE
+    ) +
+    geom_text(
+      data = lon_label_df,
+      aes(x = x, y = y, label = label),
+      inherit.aes = FALSE,
+      size = 4
+    ) +
+    scale_fill_gradientn(
+      colors = custom_colors,
+      values = scales::rescale(c(0, 50, 150), from = c(0, 150)),
+      limits = c(0, 150),
+      breaks = c(0, 50, 100, 150),
+      labels = c("0", "50", "100", "150+"),
+      oob = scales::squish,
+      na.value = "transparent",
+      name = legend_title,
+      guide = guide_colorbar(
+        title.position = "top",
+        title.hjust = 0.5,
+        barwidth = grid::unit(12, "cm"),
+        barheight = grid::unit(0.25, "cm")
+      )
+    ) +
+    coord_sf(
+      crs = crs_moll,
+      datum = NA,
+      xlim = plot_window_moll$xlim,
+      ylim = plot_window_moll$ylim,
+      expand = FALSE,
+      clip = "on"
+    ) +
+    labs(
+      x = "Longitude",
+      y = "Latitude"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "bottom",
+      legend.title = element_text(size = 15, hjust = 0.5),
+      legend.text = element_text(size = 12),
+      axis.title = element_text(size = 13),
+      axis.text.x = element_blank(),
+      axis.text.y = element_text(size = 10),
+      axis.ticks.x = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(
+        color = "black",
+        fill = NA,
+        linewidth = 0.5
+      ),
+      panel.background = element_rect(
+        fill = "grey92",
+        color = NA
+      )
+    )
+}
+
 # ============================================================
 # Combine three maps
 # ============================================================
@@ -1563,23 +1784,33 @@ add_black_border <- function(p) {
     )
 }
 
-combine_three_maps <- function(p_2010,
-                               p_base2100,
-                               p_500c2100,
-                               legend_from,
-                               legend_title_size = 15,
-                               legend_text_size = 12,
-                               rel_legend_height = 0.11) {
+combine_three_maps <- function(
+    p_2010,
+    p_base_future,
+    p_500c_future,
+    legend_from,
+    future_year = 2050,
+    legend_title_size = 15,
+    legend_text_size = 12,
+    rel_legend_height = 0.11
+) {
+
   p_2010_clean <- add_black_border(
     add_panel_label(p_2010, "2010")
   )
 
   p_base_clean <- add_black_border(
-    add_panel_label(p_base2100, "Baseline 2100")
+    add_panel_label(
+      p_base_future,
+      paste0("Baseline ", future_year)
+    )
   )
 
   p_500c_clean <- add_black_border(
-    add_panel_label(p_500c2100, "500C 2100")
+    add_panel_label(
+      p_500c_future,
+      paste0("500C ", future_year)
+    )
   )
 
   legend_shared <- cowplot::get_legend(
@@ -1617,25 +1848,25 @@ combine_three_maps <- function(p_2010,
 }
 
 # ============================================================
-# Input maps
+# Input maps: 2010 and 2050
 # ============================================================
 
 Inputdismap_2010 <- make_input_map_df("BaU", 2010)
-Inputdismap_2100Base <- make_input_map_df("BaU", 2100)
-Inputdismap_2100500C <- make_input_map_df("500C", 2100)
+Inputdismap_2050Base <- make_input_map_df("BaU", 2050)
+Inputdismap_2050500C <- make_input_map_df("500C", 2050)
 
 Inputdismap_2010_moll <- project_grid_to_mollweide(
   df = Inputdismap_2010,
   value_col = "Input"
 )
 
-Inputdismap_2100Base_moll <- project_grid_to_mollweide(
-  df = Inputdismap_2100Base,
+Inputdismap_2050Base_moll <- project_grid_to_mollweide(
+  df = Inputdismap_2050Base,
   value_col = "Input"
 )
 
-Inputdismap_2100500C_moll <- project_grid_to_mollweide(
-  df = Inputdismap_2100500C,
+Inputdismap_2050500C_moll <- project_grid_to_mollweide(
+  df = Inputdismap_2050500C,
   value_col = "Input"
 )
 
@@ -1643,17 +1874,17 @@ plot_input_2010 <- plot_input_map(
   Inputdismap_2010_moll
 )
 
-plot_input_base2100 <- plot_input_map(
-  Inputdismap_2100Base_moll
+plot_input_base2050 <- plot_input_map(
+  Inputdismap_2050Base_moll
 )
 
-plot_input_500c2100 <- plot_input_map(
-  Inputdismap_2100500C_moll
+plot_input_500c2050 <- plot_input_map(
+  Inputdismap_2050500C_moll
 )
 
 ggsave(
-  filename = "../output/Input_2010.png",
-  plot = plot_input_2010,
+  "../output/Input_2010.png",
+  plot_input_2010,
   width = 10,
   height = 6,
   dpi = 300,
@@ -1661,8 +1892,8 @@ ggsave(
 )
 
 ggsave(
-  filename = "../output/Input_Base_2100_ver2.png",
-  plot = plot_input_base2100,
+  "../output/Input_Base_2050.png",
+  plot_input_base2050,
   width = 10,
   height = 6,
   dpi = 300,
@@ -1670,8 +1901,8 @@ ggsave(
 )
 
 ggsave(
-  filename = "../output/Input_500C_2100.png",
-  plot = plot_input_500c2100,
+  "../output/Input_500C_2050.png",
+  plot_input_500c2050,
   width = 10,
   height = 6,
   dpi = 300,
@@ -1680,16 +1911,17 @@ ggsave(
 
 Input_combined <- combine_three_maps(
   p_2010 = plot_input_2010,
-  p_base2100 = plot_input_base2100,
-  p_500c2100 = plot_input_500c2100,
+  p_base_future = plot_input_base2050,
+  p_500c_future = plot_input_500c2050,
   legend_from = plot_input_2010,
+  future_year = 2050,
   legend_title_size = 15,
   legend_text_size = 12,
   rel_legend_height = 0.131
 )
 
 ggsave(
-  filename = "../output/Input_combined_rev.png",
+  filename = "../output/Input_combined_2050.png",
   plot = Input_combined,
   width = 12,
   height = 8,
@@ -1698,25 +1930,25 @@ ggsave(
 )
 
 # ============================================================
-# Gas maps
+# Gas maps: 2010 and 2050
 # ============================================================
 
 OUTgasdismap_2010 <- make_outgas_map_df("BaU", 2010)
-OUTgasdismap_2100base <- make_outgas_map_df("BaU", 2100)
-OUTgasdismap_2100500C <- make_outgas_map_df("500C", 2100)
+OUTgasdismap_2050base <- make_outgas_map_df("BaU", 2050)
+OUTgasdismap_2050500C <- make_outgas_map_df("500C", 2050)
 
 OUTgasdismap_2010_moll <- project_grid_to_mollweide(
   df = OUTgasdismap_2010,
   value_col = "OUTgasgrid"
 )
 
-OUTgasdismap_2100base_moll <- project_grid_to_mollweide(
-  df = OUTgasdismap_2100base,
+OUTgasdismap_2050base_moll <- project_grid_to_mollweide(
+  df = OUTgasdismap_2050base,
   value_col = "OUTgasgrid"
 )
 
-OUTgasdismap_2100500C_moll <- project_grid_to_mollweide(
-  df = OUTgasdismap_2100500C,
+OUTgasdismap_2050500C_moll <- project_grid_to_mollweide(
+  df = OUTgasdismap_2050500C,
   value_col = "OUTgasgrid"
 )
 
@@ -1724,53 +1956,40 @@ plot_gas_2010 <- plot_gas_map(
   OUTgasdismap_2010_moll
 )
 
-plot_gas_base2100 <- plot_gas_map(
-  OUTgasdismap_2100base_moll
+plot_gas_base2050 <- plot_gas_map(
+  OUTgasdismap_2050base_moll
 )
 
-plot_gas_500c2100 <- plot_gas_map(
-  OUTgasdismap_2100500C_moll
+plot_gas_500c2050 <- plot_gas_map(
+  OUTgasdismap_2050500C_moll
 )
 
-ggsave(
-  filename = "../output/outgas_2010.png",
-  plot = plot_gas_2010,
-  width = 10,
-  height = 6,
-  dpi = 300,
-  bg = "white"
-)
+ggsave("../output/outgas_2010.png",
+       plot_gas_2010,
+       width = 10, height = 6, dpi = 300, bg = "white")
 
-ggsave(
-  filename = "../output/outgas_Base_2100_ver2.png",
-  plot = plot_gas_base2100,
-  width = 10,
-  height = 6,
-  dpi = 300,
-  bg = "white"
-)
+ggsave("../output/outgas_Base_2050.png",
+       plot_gas_base2050,
+       width = 10, height = 6, dpi = 300, bg = "white")
 
-ggsave(
-  filename = "../output/outgas_500C_2100.png",
-  plot = plot_gas_500c2100,
-  width = 10,
-  height = 6,
-  dpi = 300,
-  bg = "white"
-)
+ggsave("../output/outgas_500C_2050.png",
+       plot_gas_500c2050,
+       width = 10, height = 6, dpi = 300, bg = "white")
+
 
 Outgas_combined <- combine_three_maps(
   p_2010 = plot_gas_2010,
-  p_base2100 = plot_gas_base2100,
-  p_500c2100 = plot_gas_500c2100,
+  p_base_future = plot_gas_base2050,
+  p_500c_future = plot_gas_500c2050,
   legend_from = plot_gas_2010,
+  future_year = 2050,
   legend_title_size = 15,
   legend_text_size = 12,
   rel_legend_height = 0.131
 )
 
 ggsave(
-  filename = "../output/Outgas_combined.png",
+  filename = "../output/Outgas_combined_2050.png",
   plot = Outgas_combined,
   width = 12,
   height = 7.5,
@@ -1783,21 +2002,21 @@ ggsave(
 # ============================================================
 
 OUTleadismap_2010 <- make_outlea_map_df("BaU", 2010)
-OUTleadismap_2100base <- make_outlea_map_df("BaU", 2100)
-OUTleadismap_2100500C <- make_outlea_map_df("500C", 2100)
+OUTleadismap_2050base <- make_outlea_map_df("BaU", 2050)
+OUTleadismap_2050500C <- make_outlea_map_df("500C", 2050)
 
 OUTleadismap_2010_moll <- project_grid_to_mollweide(
   df = OUTleadismap_2010,
   value_col = "OUTleagrid"
 )
 
-OUTleadismap_2100base_moll <- project_grid_to_mollweide(
-  df = OUTleadismap_2100base,
+OUTleadismap_2050base_moll <- project_grid_to_mollweide(
+  df = OUTleadismap_2050base,
   value_col = "OUTleagrid"
 )
 
-OUTleadismap_2100500C_moll <- project_grid_to_mollweide(
-  df = OUTleadismap_2100500C,
+OUTleadismap_2050500C_moll <- project_grid_to_mollweide(
+  df = OUTleadismap_2050500C,
   value_col = "OUTleagrid"
 )
 
@@ -1805,54 +2024,114 @@ plot_leaching_2010 <- plot_leaching_map(
   OUTleadismap_2010_moll
 )
 
-plot_leaching_base2100 <- plot_leaching_map(
-  OUTleadismap_2100base_moll
+plot_leaching_base2050 <- plot_leaching_map(
+  OUTleadismap_2050base_moll
 )
 
-plot_leaching_500c2100 <- plot_leaching_map(
-  OUTleadismap_2100500C_moll
+plot_leaching_500c2050 <- plot_leaching_map(
+  OUTleadismap_2050500C_moll
 )
 
-ggsave(
-  filename = "../output/outlea_2010.png",
-  plot = plot_leaching_2010,
-  width = 10,
-  height = 6,
-  dpi = 300,
-  bg = "white"
-)
+ggsave("../output/outlea_2010.png",
+       plot_leaching_2010,
+       width = 10, height = 6, dpi = 300, bg = "white")
 
-ggsave(
-  filename = "../output/outlea_Base_2100.png",
-  plot = plot_leaching_base2100,
-  width = 10,
-  height = 6,
-  dpi = 300,
-  bg = "white"
-)
+ggsave("../output/outlea_Base_2050.png",
+       plot_leaching_base2050,
+       width = 10, height = 6, dpi = 300, bg = "white")
 
-ggsave(
-  filename = "../output/outlea_500C_2100.png",
-  plot = plot_leaching_500c2100,
-  width = 10,
-  height = 6,
-  dpi = 300,
-  bg = "white"
-)
+ggsave("../output/outlea_500C_2050.png",
+       plot_leaching_500c2050,
+       width = 10, height = 6, dpi = 300, bg = "white")
+
 
 Outlea_combined <- combine_three_maps(
   p_2010 = plot_leaching_2010,
-  p_base2100 = plot_leaching_base2100,
-  p_500c2100 = plot_leaching_500c2100,
+  p_base_future = plot_leaching_base2050,
+  p_500c_future = plot_leaching_500c2050,
   legend_from = plot_leaching_2010,
+  future_year = 2050,
   legend_title_size = 15,
   legend_text_size = 12,
   rel_legend_height = 0.131
 )
 
 ggsave(
-  filename = "../output/Outlea_combined.png",
+  filename = "../output/Outlea_combined_2050.png",
   plot = Outlea_combined,
+  width = 12,
+  height = 7.5,
+  dpi = 300,
+  bg = "white"
+)
+
+# ============================================================
+# OUTcrop maps: 2010 and 2050
+# ============================================================
+
+OUTcropdismap_2010 <- make_outcrop_map_df("BaU", 2010)
+OUTcropdismap_2050base <- make_outcrop_map_df("BaU", 2050)
+OUTcropdismap_2050500C <- make_outcrop_map_df("500C", 2050)
+
+OUTcropdismap_2010_moll <- project_grid_to_mollweide(
+  df = OUTcropdismap_2010,
+  value_col = "CropN"
+)
+
+OUTcropdismap_2050base_moll <- project_grid_to_mollweide(
+  df = OUTcropdismap_2050base,
+  value_col = "CropN"
+)
+
+OUTcropdismap_2050500C_moll <- project_grid_to_mollweide(
+  df = OUTcropdismap_2050500C,
+  value_col = "CropN"
+)
+
+plot_outcrop_2010 <- plot_outcrop_map(
+  OUTcropdismap_2010_moll
+)
+
+plot_outcrop_base2050 <- plot_outcrop_map(
+  OUTcropdismap_2050base_moll
+)
+
+plot_outcrop_500c2050 <- plot_outcrop_map(
+  OUTcropdismap_2050500C_moll
+)
+
+ggsave(
+  "../output/outcrop_2010.png",
+  plot_outcrop_2010,
+  width = 10, height = 6, dpi = 300, bg = "white"
+)
+
+ggsave(
+  "../output/outcrop_Base_2050.png",
+  plot_outcrop_base2050,
+  width = 10, height = 6, dpi = 300, bg = "white"
+)
+
+ggsave(
+  "../output/outcrop_500C_2050.png",
+  plot_outcrop_500c2050,
+  width = 10, height = 6, dpi = 300, bg = "white"
+)
+
+Outcrop_combined <- combine_three_maps(
+  p_2010 = plot_outcrop_2010,
+  p_base_future = plot_outcrop_base2050,
+  p_500c_future = plot_outcrop_500c2050,
+  legend_from = plot_outcrop_2010,
+  future_year = 2050,
+  legend_title_size = 15,
+  legend_text_size = 12,
+  rel_legend_height = 0.131
+)
+
+ggsave(
+  filename = "../output/Outcrop_combined_2050.png",
+  plot = Outcrop_combined,
   width = 12,
   height = 7.5,
   dpi = 300,
