@@ -1615,7 +1615,7 @@ plot_lmdi_decomposition_top14 <- function(scenario_name,
       ncol = 3,
       scales = "free_y"
     ) +
-    ggplot2::theme_bw(base_size = 12) +
+    ggplot2::theme_bw(base_size = 18) +
     ggplot2::theme(
       panel.grid.major = ggplot2::element_blank(),
       panel.grid.minor = ggplot2::element_blank(),
@@ -1641,7 +1641,7 @@ plot_lmdi_decomposition_top14 <- function(scenario_name,
       paste0("LMDI_Nload_decomposition_", scenario_name, "_top14_absNload2010.png")
     ),
     plot = p,
-    width = 12,
+    width = 15,
     height = 8,
     dpi = 300,
     bg = "white"
