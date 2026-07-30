@@ -1,40 +1,4 @@
-# =========================================================
-# GAMS / GDX settings
-# GAMS_DIR is supplied from the shell script.
-# =========================================================
-
-gams_dir <- Sys.getenv("GAMS_DIR", unset = "")
-
-if (!nzchar(gams_dir)) {
-stop(
-"GAMS_DIR is not set.\n",
-"Please set GAMS_DIR in the shell script before running Rscript.\n",
-"Example:\n",
-"  export GAMS_DIR="$HOME/gams39.3_linux_x64_64_sfx""
-)
-}
-
-gams_dir <- normalizePath(
-path.expand(gams_dir),
-winslash = "/",
-mustWork = TRUE
-)
-
-Sys.setenv(
-PATH = paste(gams_dir, Sys.getenv("PATH"), sep = .Platform$path.sep)
-)
-
-if (.Platform$OS.type != "windows") {
-Sys.setenv(
-LD_LIBRARY_PATH = paste(
-gams_dir,
-Sys.getenv("LD_LIBRARY_PATH"),
-sep = .Platform$path.sep
-)
-)
-}
-
-gdxrrw::igdx(gams_dir)
+Sys.setenv(PATH = paste(Sys.getenv("PATH"), "C:/GAMS/53", sep = ";"))
 Sys.which("gams")
 library(dplyr)
 library(tidyr)
@@ -60,7 +24,7 @@ SCENARIOset2 <- if (SCENARIOset == "SSP2_BaU_NoCC") {
 
 #Fertilizer input
     fert_crop_pasture_ratio <- read_csv("../data/FUBC_1_to_9_data.csv") %>% #input data
-    dplyr::select("ISO3_code","Year","Crop", "Crop_area_k_ha","N_k_t")
+    select("ISO3_code","Year","Crop", "Crop_area_k_ha","N_k_t")
 
     region_iso_17 <- readLines("../data/region_iso_17.map")
     df_region_iso_17 <- do.call(rbind, strsplit(region_iso_17, "\\s+")) %>%

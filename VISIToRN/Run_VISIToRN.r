@@ -1,3 +1,151 @@
+library(sf)
+library(raster)
+library(ggplot2)
+library(rnaturalearth)
+library(scales)
+library(grid)
+
+if (!exists("safe_save_rdata", mode = "function")) {
+  source("safe_save_rdata.R", local = .GlobalEnv)
+}
+
+# ------------------------------------------------------------
+# Common map settings
+# ------------------------------------------------------------
+crs_lonlat <- sf::st_crs(4326)
+
+moll_proj4 <- paste(
+  "+proj=moll",
+  "+lon_0=0",
+  "+datum=WGS84",
+  "+units=m",
+  "+no_defs"
+)
+
+crs_moll <- sf::st_crs(moll_proj4)
+
+map_lat_min <- -60
+map_lat_max <- 70
+# ------------------------------------------------------------
+# World map
+# ------------------------------------------------------------
+world_lonlat <- rnaturalearth::ne_countries(
+  scale = "medium",
+  returnclass = "sf"
+)
+
+map_bbox_lonlat <- sf::st_bbox(
+  c(
+    xmin = -180,
+    ymin = map_lat_min,
+    xmax =  180,
+    ymax = map_lat_max
+  ),
+  crs = crs_lonlat
+)
+
+world_crop <- suppressWarnings(
+  sf::st_crop(world_lonlat, map_bbox_lonlat)
+)
+
+world_moll <- world_crop %>%
+  sf::st_make_valid() %>%
+  sf::st_transform(crs = crs_moll)
+
+geom_types <- as.character(sf::st_geometry_type(world_moll))
+world_moll <- world_moll[geom_types %in% c("POLYGON", "MULTIPOLYGON"), ]
+
+# ------------------------------------------------------------
+# Graticule
+# ------------------------------------------------------------
+graticule_lonlat <- sf::st_graticule(
+  lon = seq(-180, 180, by = 60),
+  lat = seq(-60, 60, by = 20),
+  crs = crs_lonlat
+)
+
+graticule_moll <- sf::st_transform(graticule_lonlat, crs = crs_moll)
+
+# ------------------------------------------------------------
+# Mollweide ellipse
+# ------------------------------------------------------------
+make_mollweide_ellipse <- function(
+    crs_from = crs_lonlat,
+    crs_to = crs_moll,
+    n = 1000
+) {
+  lat_seq <- seq(-89.999, 89.999, length.out = n)
+
+  right_sf <- sf::st_as_sf(
+    data.frame(
+      lon = rep(179.999, n),
+      lat = lat_seq
+    ),
+    coords = c("lon", "lat"),
+    crs = crs_from
+  )
+
+  left_sf <- sf::st_as_sf(
+    data.frame(
+      lon = rep(-179.999, n),
+      lat = rev(lat_seq)
+    ),
+    coords = c("lon", "lat"),
+    crs = crs_from
+  )
+
+  right_xy <- sf::st_coordinates(sf::st_transform(right_sf, crs_to))
+  left_xy  <- sf::st_coordinates(sf::st_transform(left_sf,  crs_to))
+
+  coords <- rbind(
+    right_xy[, 1:2, drop = FALSE],
+    left_xy[, 1:2, drop = FALSE]
+  )
+
+  coords <- rbind(coords, coords[1, , drop = FALSE])
+
+  sf::st_sf(
+    geometry = sf::st_sfc(
+      sf::st_polygon(list(coords)),
+      crs = crs_to
+    )
+  )
+}
+
+mollweide_ellipse <- make_mollweide_ellipse()
+make_plot_window_moll <- function(
+    lon_min = -180,
+    lon_max = 180,
+    lat_min = map_lat_min,
+    lat_max = map_lat_max,
+    n = 400
+) {
+  boundary_pts <- rbind(
+    cbind(seq(lon_min, lon_max, length.out = n), rep(lat_max, n)),
+    cbind(seq(lon_min, lon_max, length.out = n), rep(lat_min, n)),
+    cbind(rep(lon_min, n), seq(lat_min, lat_max, length.out = n)),
+    cbind(rep(lon_max, n), seq(lat_min, lat_max, length.out = n))
+  )
+
+  pts_sf <- sf::st_as_sf(
+    data.frame(
+      lon = boundary_pts[, 1],
+      lat = boundary_pts[, 2]
+    ),
+    coords = c("lon", "lat"),
+    crs = crs_lonlat
+  )
+
+  pts_moll <- sf::st_transform(pts_sf, crs = crs_moll)
+  xy <- sf::st_coordinates(pts_moll)
+
+  list(
+    xlim = range(xy[, 1], na.rm = TRUE),
+    ylim = range(xy[, 2], na.rm = TRUE)
+  )
+}
+
+plot_window_moll <- make_plot_window_moll()
 # =========================================================
 # Data
 # =========================================================
@@ -69,6 +217,260 @@ aggregate_river_mouth <- function(test_sim, rivnum_matrix, grid_df, riv_table) {
   df_river_named_mouth
 }
 
+
+matrix_to_lonlat_df <- function(
+    mat,
+    value_name,
+    lon_seq = seq(-179.75, 179.75, by = 0.5),
+    lat_seq = seq(-89.75,  89.75, by = 0.5),
+    flip_lat = TRUE
+) {
+
+  if (flip_lat) {
+    mat <- mat[, ncol(mat):1, drop = FALSE]
+  }
+
+  df <- expand.grid(
+    x = lon_seq,
+    y = lat_seq
+  )
+
+  df[[value_name]] <- as.vector(mat)
+
+  df
+}
+
+project_grid_to_mollweide <- function(
+    df,
+    value_col,
+    target_resolution = 50000
+) {
+  required_cols <- c("x", "y", value_col)
+  missing_cols <- setdiff(required_cols, names(df))
+
+  if (length(missing_cols) > 0) {
+    stop("No column found: ", paste(missing_cols, collapse = ", "))
+  }
+
+  df_crop <- df %>%
+    dplyr::select(x, y, value = dplyr::all_of(value_col)) %>%
+    dplyr::filter(
+      is.finite(x),
+      is.finite(y),
+      y >= map_lat_min,
+      y <= map_lat_max,
+      y > -89.999,
+      y < 89.999
+    )
+
+  raster_lonlat <- raster::rasterFromXYZ(
+    as.data.frame(df_crop),
+    crs = "+proj=longlat +datum=WGS84 +no_defs"
+  )
+
+  names(raster_lonlat) <- value_col
+
+  raster_lonlat <- raster::crop(
+    raster_lonlat,
+    raster::extent(-180, 180, map_lat_min, map_lat_max)
+  )
+
+  raster_moll <- suppressWarnings(
+    raster::projectRaster(
+      raster_lonlat,
+      crs = moll_proj4,
+      res = target_resolution,
+      method = "ngb"
+    )
+  )
+
+  df_moll <- as.data.frame(
+    raster_moll,
+    xy = TRUE,
+    na.rm = TRUE
+  )
+
+  names(df_moll)[3] <- value_col
+  df_moll
+}
+
+plot_ratio_class_map <- function(df, title_text) {
+
+  cols <- c(
+    "#08306B", "#4292C6", "#C6DBEF",
+    "#FEE0D2", "#FB6A4A", "#CB181D"
+  )
+
+  class_labels <- c(
+    "<= 0.4",
+    "0.4–0.8",
+    "0.8–1.2",
+    "1.2–2.1",
+    "2.1–3.0",
+    "> 3.0"
+  )
+
+  ggplot() +
+    geom_sf(
+      data = mollweide_ellipse,
+      fill = "white",
+      color = NA,
+      inherit.aes = FALSE
+    ) +
+    geom_raster(
+    data = df,
+    aes(
+      x = x,
+      y = y,
+      fill = factor(Z, levels = 1:6)
+    )
+  ) +
+    geom_sf(
+      data = graticule_moll,
+      color = "grey70",
+      linewidth = 0.25,
+      inherit.aes = FALSE
+    ) +
+    geom_sf(
+      data = world_moll,
+      fill = NA,
+      color = "grey50",
+      linewidth = 0.15,
+      inherit.aes = FALSE
+    ) +
+    scale_fill_manual(
+      values = setNames(cols, as.character(1:6)),
+      labels = class_labels,
+      drop = FALSE,
+      na.value = "transparent",
+      name = NULL,
+      guide = guide_legend(
+        direction = "horizontal",
+        title.position = "top",
+        title.hjust = 0.5,
+        label.position = "bottom",
+        nrow = 1,
+        byrow = TRUE,
+        keywidth = grid::unit(1.3, "cm"),
+        keyheight = grid::unit(0.35, "cm")
+      )
+    ) +
+    coord_sf(
+      crs = crs_moll,
+      datum = NA,
+      xlim = plot_window_moll$xlim,
+      ylim = plot_window_moll$ylim,
+      expand = FALSE,
+      clip = "on"
+    ) +
+    labs(
+      title = title_text,
+      x = "Longitude",
+      y = "Latitude"
+    ) +
+    theme_minimal() +
+    theme(
+      panel.background = element_rect(fill = "grey92", color = NA),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
+      panel.grid = element_blank(),
+
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.box = "horizontal",
+      legend.title = element_blank(),
+      legend.text = element_text(size = 10),
+      legend.margin = margin(t = 2, b = 2),
+      plot.margin = margin(3, 3, 3, 3, "mm")
+    )
+}
+
+plot_continuous_map <- function(
+    df,
+    value_col,
+    title_text,
+    legend_title,
+    limits = NULL,
+    colors = fields::tim.colors(64)
+) {
+
+  ggplot() +
+    geom_sf(
+      data = mollweide_ellipse,
+      fill = "white",
+      color = NA,
+      inherit.aes = FALSE
+    ) +
+    geom_raster(
+      data = df,
+      aes(
+        x = x,
+        y = y,
+        fill = .data[[value_col]]
+      )
+    ) +
+    geom_sf(
+      data = graticule_moll,
+      color = "grey70",
+      linewidth = 0.25,
+      inherit.aes = FALSE
+    ) +
+    geom_sf(
+      data = world_moll,
+      fill = NA,
+      color = "grey50",
+      linewidth = 0.15,
+      inherit.aes = FALSE
+    ) +
+    scale_fill_gradientn(
+      colours = colors,
+      limits = limits,
+      oob = scales::squish,
+      na.value = "transparent",
+      name = legend_title,
+      guide = guide_colorbar(
+        direction = "horizontal",
+        title.position = "top",
+        title.hjust = 0.5,
+        label.position = "bottom",
+        barwidth = grid::unit(12, "cm"),
+        barheight = grid::unit(0.35, "cm")
+      )
+    ) +
+    coord_sf(
+      crs = crs_moll,
+      datum = NA,
+      xlim = plot_window_moll$xlim,
+      ylim = plot_window_moll$ylim,
+      expand = FALSE,
+      clip = "on"
+    ) +
+    labs(
+      title = title_text,
+      x = "Longitude",
+      y = "Latitude"
+    ) +
+    theme_minimal() +
+    theme(
+      panel.background = element_rect(
+        fill = "grey92",
+        color = NA
+      ),
+      panel.border = element_rect(
+        color = "black",
+        fill = NA,
+        linewidth = 0.5
+      ),
+      panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    legend.box = "horizontal",
+    legend.title = element_text(size = 12, hjust = 0.5),
+    legend.text = element_text(size = 10),
+    legend.margin = margin(t = 2, b = 2),
+    plot.margin = margin(3, 3, 3, 3, "mm")
+    )
+}
+
 analyze_concentration <- function(test_sim,
                                   case_label,
                                   nmip3 = FALSE,
@@ -80,6 +482,7 @@ analyze_concentration <- function(test_sim,
   suffix_save <- if (nmip3) "_NMIP3" else ""
   file_suffix <- paste0(case_label, suffix_save)
 
+
   # =========================================================
   # Extract VISIToRN outputs
   # =========================================================
@@ -87,10 +490,10 @@ analyze_concentration <- function(test_sim,
   Qout     <- test_sim$Qout       # water outflow [lon, lat, time]
 
   if (is.null(QoutNint)) {
-    stop("test_sim$QoutNint が見つかりません。")
+    stop("No object found: test_sim$QoutNint")
   }
   if (is.null(Qout)) {
-    stop("test_sim$Qout が見つかりません。")
+    stop("No object found: test_sim$Qout")
   }
 
   # =========================================================
@@ -101,7 +504,7 @@ analyze_concentration <- function(test_sim,
   # Safety check
   if (!all(dim(QoutNint) == dim(Qout_int))) {
     stop(
-      "QoutNint と Qout_int の次元が一致しません: ",
+      "No column found for DIN load in the observation data: ",
       "dim(QoutNint) = ", paste(dim(QoutNint), collapse = " x "),
       ", dim(Qout_int) = ", paste(dim(Qout_int), collapse = " x ")
     )
@@ -115,7 +518,6 @@ analyze_concentration <- function(test_sim,
   C_fw_ratio[!is.finite(C_fw_ratio)] <- NA
 
   # mg N/L
-  # 以前のコードと同じ換算を維持
   C_fw_mgL <- C_fw_ratio * 1e6
 
   # =========================================================
@@ -125,7 +527,7 @@ analyze_concentration <- function(test_sim,
   R[C_fw_mgL <= 0] <- NA
   R[!is.finite(R)] <- NA
 
-  breaks_ratio <- c(0, 0.3, 0.6, 1.0, 2, 3, Inf)
+  breaks_ratio <- c(0, 0.4, 0.8, 1.2, 2.1, 3.0, Inf)
 
   classes_vec <- cut(
     as.vector(R),
@@ -149,111 +551,136 @@ analyze_concentration <- function(test_sim,
   )
 
   class_labels <- c(
-    "<= 0.3",
-    "0.3–0.6",
-    "0.6–1.0",
-    "1.0–2.0",
-    "2.0–3.0",
+    "<= 0.4",
+    "0.4–0.8",
+    "0.8–1.2",
+    "1.2–2.1",
+    "2.1–3.0",
     "> 3.0"
   )
 
-  lon_seq <- seq(-179.75, 179.75, by = 0.5)
-  lat_seq <- seq( -89.75,  89.75, by = 0.5)
+# =========================================================
+# 1) Concentration relative to threshold: 6 classes
+# =========================================================
 
-  # =========================================================
-  # 1) Concentration relative to threshold: 6 classes
-  # =========================================================
-  png(
-    filename = file.path(out_dir, paste0("C_fw_ratio_6class_", file_suffix, ".png")),
-    width = 1200,
-    height = 800,
-    res = 150
+df_Z <- matrix_to_lonlat_df(
+  Z,
+  value_name = "Z"
+)
+
+df_Z_moll <- project_grid_to_mollweide(
+  df = df_Z,
+  value_col = "Z"
+)
+
+p_ratio <- plot_ratio_class_map(
+  df = df_Z_moll,
+  title_text = paste0(
+    "N concentration relative to threshold (",
+    thr,
+    " mg N/L): ",
+    case_label
   )
+)
 
-  fields::image.plot(
-    x = lon_seq,
-    y = lat_seq,
-    z = Z[, ncol(Z):1],
-    breaks = seq(0.5, 6.5, by = 1),
-    col = cols,
-    na.col = "grey80",
-    main = paste0(
-      "N concentration relative to threshold (",
-      thr,
-      " mg N/L): ",
-      case_label
-    ),
-    xlab = "lon",
-    ylab = "lat",
-    axis.args = list(
-      at = 1:6,
-      labels = class_labels
-    )
-  )
+ggplot2::ggsave(
+  filename = file.path(
+    out_dir,
+    paste0("C_fw_ratio_6class_", file_suffix, ".png")
+  ),
+  plot = p_ratio,
+  width = 10,
+  height = 6.5,
+  dpi = 300,
+  bg = "white"
+)
 
-  maps::map("world", add = TRUE, col = "black", lwd = 1)
+# =========================================================
+# 2) Cumulative N outflow map
+# =========================================================
 
-  dev.off()
+QoutNint_clipped <- pmin(
+  pmax(QoutNint, 0),
+  5.0e+08
+)
 
-  # =========================================================
-  # 2) Cumulative N outflow map
-  # =========================================================
-  QoutNint_clipped <- pmin(pmax(QoutNint, 0), 5.0e+08)
+df_QoutNint <- matrix_to_lonlat_df(
+  QoutNint_clipped,
+  value_name = "QoutNint"
+)
 
-  png(
-    filename = file.path(out_dir, paste0("QoutNint_geos_Nbud_", file_suffix, ".png")),
-    width = 1200,
-    height = 800,
-    res = 150
-  )
+df_QoutNint_moll <- project_grid_to_mollweide(
+  df = df_QoutNint,
+  value_col = "QoutNint"
+)
 
-  fields::image.plot(
-    x = lon_seq,
-    y = lat_seq,
-    z = QoutNint_clipped[, ncol(QoutNint_clipped):1],
-    zlim = c(0, 5.0e+08),
-    col = fields::tim.colors(64),
-    xlab = "lon",
-    ylab = "lat",
-    main = paste0("Cumulative N outflow: ", case_label)
-  )
+p_qoutN <- plot_continuous_map(
+  df = df_QoutNint_moll,
+  value_col = "QoutNint",
+  title_text = paste0(
+    "Cumulative N outflow: ",
+    case_label
+  ),
+  legend_title = "Cumulative N outflow",
+  limits = c(0, 5.0e+08)
+)
 
-  maps::map("world", add = TRUE, col = "black", lwd = 1)
+ggplot2::ggsave(
+  filename = file.path(
+    out_dir,
+    paste0("QoutNint_geos_Nbud_", file_suffix, ".png")
+  ),
+  plot = p_qoutN,
+  width = 10,
+  height = 6.5,
+  dpi = 300,
+  bg = "white"
+)
 
-  dev.off()
+# =========================================================
+# 3) Log10 cumulative water outflow map
+# =========================================================
 
-  # =========================================================
-  # 3) Log10 cumulative water outflow map
-  # =========================================================
-  Q_out <- Qout_int
-  Q_out[Q_out <= 0] <- NA
+Q_out <- Qout_int
+Q_out[Q_out <= 0] <- NA
 
-  Q_log <- log10(Q_out)
+Q_log <- log10(Q_out)
 
-  zmin_Q <- min(Q_log, na.rm = TRUE)
-  zmax_Q <- max(Q_log, na.rm = TRUE)
+zmin_Q <- min(Q_log, na.rm = TRUE)
+zmax_Q <- max(Q_log, na.rm = TRUE)
 
-  png(
-    filename = file.path(out_dir, paste0("Q_out_log_map_", file_suffix, ".png")),
-    width = 1200,
-    height = 800,
-    res = 150
-  )
+df_Qlog <- matrix_to_lonlat_df(
+  Q_log,
+  value_name = "Q_log"
+)
 
-  fields::image.plot(
-    x = lon_seq,
-    y = lat_seq,
-    z = Q_log[, ncol(Q_log):1],
-    zlim = c(zmin_Q, zmax_Q),
-    col = fields::tim.colors(64),
-    xlab = "lon",
-    ylab = "lat",
-    main = paste0("Log10 of cumulative water outflow: ", case_label)
-  )
+df_Qlog_moll <- project_grid_to_mollweide(
+  df = df_Qlog,
+  value_col = "Q_log"
+)
 
-  maps::map("world", add = TRUE, col = "black", lwd = 1)
+p_qlog <- plot_continuous_map(
+  df = df_Qlog_moll,
+  value_col = "Q_log",
+  title_text = paste0(
+    "Log10 of cumulative water outflow: ",
+    case_label
+  ),
+  legend_title = "log10(Qout)",
+  limits = c(zmin_Q, zmax_Q)
+)
 
-  dev.off()
+ggplot2::ggsave(
+  filename = file.path(
+    out_dir,
+    paste0("Q_out_log_map_", file_suffix, ".png")
+  ),
+  plot = p_qlog,
+  width = 10,
+  height = 6.5,
+  dpi = 300,
+  bg = "white"
+)
 
   # =========================================================
   # Summary table
@@ -270,14 +697,17 @@ analyze_concentration <- function(test_sim,
     area_over_threshold_cells = sum(C_fw_mgL > thr, na.rm = TRUE)
   )
 
-  save(
-    QoutNint,
-    Qout_int,
-    C_fw_ratio,
-    C_fw_mgL,
-    R,
-    Z,
-    conc_summary,
+  safe_save_rdata(
+    object_names = c(
+      "QoutNint",
+      "Qout_int",
+      "C_fw_ratio",
+      "C_fw_mgL",
+      "R",
+      "Z",
+      "conc_summary"
+    ),
+    envir = environment(),
     file = file.path(out_dir, paste0("C_fw_analysis_", file_suffix, ".rdat"))
   )
 
@@ -363,7 +793,7 @@ make_obs_compare_plot <- function(model_df, nmip3 = FALSE) {
 
   din_col <- names(obs_raw)[stringr::str_detect(names(obs_raw), stringr::regex("DIN", ignore_case = TRUE))]
   if (length(din_col) == 0) {
-    stop("観測CSVに DIN を含む列が見つかりません。列名をご確認ください。")
+    stop("No column found for DIN load in the observation data.")
   }
 
   obs <- obs_raw %>%
@@ -414,6 +844,14 @@ make_obs_compare_plot <- function(model_df, nmip3 = FALSE) {
   dat_pos <- dat %>%
     dplyr::filter(DIN_load_kt > 0, Nload_kt > 0)
 
+  if (nrow(dat_pos) < 3) {
+    stop(
+      "Too few positive observation-model matches for comparison: ",
+      nrow(dat_pos),
+      ". Check River_Nitrogen_Load_Data.csv and River_obs_analysis.txt."
+    )
+  }
+
   label_top <- dat_pos %>%
     dplyr::mutate(
       ratio = Nload_kt / DIN_load_kt,
@@ -444,11 +882,33 @@ make_obs_compare_plot <- function(model_df, nmip3 = FALSE) {
     y_hi  = 10^(pr$fit + 1.96 * pr$se.fit)
   )
 
+  reference_lines <- tidyr::crossing(
+    multiplier = c(0.5, 1, 2),
+    DIN_load_kt = c(lo, hi)
+  ) %>%
+    dplyr::mutate(
+      Nload_kt = multiplier * DIN_load_kt,
+      reference = dplyr::case_when(
+        multiplier == 1 ~ "1:1",
+        multiplier == 2 ~ "2x",
+        TRUE ~ "0.5x"
+      )
+    )
+
   p <- ggplot2::ggplot(dat_pos, ggplot2::aes(x = DIN_load_kt, y = Nload_kt)) +
     ggplot2::geom_point(alpha = 0.85, size = 2) +
-    ggplot2::geom_function(fun = function(x) x) +
-    ggplot2::geom_function(fun = function(x) 2 * x, linetype = "dashed") +
-    ggplot2::geom_function(fun = function(x) 0.5 * x, linetype = "dashed") +
+    ggplot2::geom_line(
+      data = reference_lines,
+      ggplot2::aes(
+        x = DIN_load_kt,
+        y = Nload_kt,
+        group = reference,
+        linetype = reference
+      ),
+      inherit.aes = FALSE,
+      linewidth = 0.6,
+      show.legend = FALSE
+    ) +
     ggrepel::geom_text_repel(
       data = label_top,
       ggplot2::aes(label = csv_name),
@@ -468,22 +928,30 @@ make_obs_compare_plot <- function(model_df, nmip3 = FALSE) {
       inherit.aes = FALSE
     ) +
     ggplot2::scale_x_log10(
-      limits = c(lo, hi),
       labels = lbl_num,
-      name = "Observed N load (kt N yr-1)",
+      name = expression("Observed N load (Gg N " * "yr"^{-1} * ")"),
       expand = ggplot2::expansion(mult = 0.02)
     ) +
     ggplot2::scale_y_log10(
-      limits = c(lo, hi),
       labels = lbl_num,
-      name = "Simulated N load (kt N yr-1)",
+      name = expression("Simulated N load (Gg N " * "yr"^{-1} * ")"),
       expand = ggplot2::expansion(mult = 0.02)
     ) +
-    ggplot2::coord_equal() +
+    ggplot2::scale_linetype_manual(
+      values = c(
+        "0.5x" = "dashed",
+        "1:1" = "solid",
+        "2x" = "dashed"
+      )
+    ) +
+    ggplot2::coord_equal(
+      xlim = c(lo, hi),
+      ylim = c(lo, hi)
+    ) +
     ggplot2::theme_bw(base_size = 12) +
     ggplot2::ggtitle(
-      "河川ごとの窒素負荷の本研究における推計値および観測値（He et al., 2011）（kt-N）",
-      subtitle = "実線: 1:1, 破線: ×2 / ×0.5"
+      expression("（He et al., 2011）（Gg N " * "yr"^{-1} * "）"),
+      subtitle = "solid: 1:1, dashed: ×2 / ×0.5"
     )
 
   calc_metrics <- function(df, obs_col = "DIN_load_kt", mod_col = "Nload_kt") {
@@ -535,8 +1003,9 @@ make_obs_compare_plot <- function(model_df, nmip3 = FALSE) {
     dpi = 300,
     bg = "white"
   )
-  save(
-    metrics,
+  safe_save_rdata(
+    object_names = "metrics",
+    envir = environment(),
     file = paste0("obs_compare_metrics", suffix_save, ".rdat")
   )
 
@@ -624,8 +1093,14 @@ df_river_all_mit <- bind_rows(
 # =========================================================
 suffix_save <- if (NMIP3) "_NMIP3" else ""
 
-save(df_river_all,
-     file = paste0("Data_pd/df_river_all", suffix_save, ".rdat"))
+safe_save_rdata(
+  object_names = "df_river_all",
+  file = paste0("Data_pd/df_river_all", suffix_save, ".rdat"),
+  envir = environment()
+)
 
-save(df_river_all_mit,
-     file = paste0("Data_pd/df_river_all_mit", suffix_save, ".rdat"))
+safe_save_rdata(
+  object_names = "df_river_all_mit",
+  file = paste0("Data_pd/df_river_all_mit", suffix_save, ".rdat"),
+  envir = environment()
+)
