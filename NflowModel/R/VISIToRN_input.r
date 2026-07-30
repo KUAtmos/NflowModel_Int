@@ -1,3 +1,4 @@
+select <- dplyr::select
 current_wd <- getwd()
 current_wd_norm <- normalizePath(current_wd, winslash = "/", mustWork = TRUE)
 
@@ -45,97 +46,9 @@ library(readr)
 library(forcats)
 library(purrr)
 
-if (.Platform$OS.type == "windows") {
-  gams_dir <- "C:/GAMS/53"
-} else {
-  gams_dir <- normalizePath(
-    path.expand("~/gams39.3_linux_x64_64_sfx"),
-    mustWork = TRUE
-  )
-}
+source("safe_save_rdata.R", local = .GlobalEnv)
 
-Sys.setenv(
-  PATH = paste(gams_dir, Sys.getenv("PATH"), sep = .Platform$path.sep)
-)
-
-gdxrrw::igdx(gams_dir)
-
-message("GAMS path: ", Sys.which("gams"))
-
-rgdx.param <- function(gdx_file, symbol_name) {
-  x <- gdxrrw::rgdx(
-    gdx_file,
-    list(
-      name = symbol_name,
-      form = "sparse"
-    )
-  )
-
-  df <- as.data.frame(x$val, stringsAsFactors = FALSE)
-
-  if (ncol(df) < 2) {
-    stop("Unexpected GDX parameter format: ", symbol_name)
-  }
-
-  n_dim <- ncol(df) - 1
-
-  if (!is.null(x$domains) && length(x$domains) == n_dim) {
-    names(df)[seq_len(n_dim)] <- x$domains
-  } else {
-    names(df)[seq_len(n_dim)] <- paste0("i", seq_len(n_dim))
-  }
-
-  names(df)[ncol(df)] <- "value"
-
-  df[[symbol_name]] <- df$value
-
-  df
-}
-
-
-rgdx.set <- function(gdx_file, symbol_name) {
-  x <- gdxrrw::rgdx(
-    gdx_file,
-    list(
-      name = symbol_name,
-      form = "sparse"
-    )
-  )
-
-  df <- as.data.frame(x$val, stringsAsFactors = FALSE)
-
-  if (ncol(df) < 1) {
-    stop("Unexpected GDX set format: ", symbol_name)
-  }
-
-  if (ncol(df) >= 2) {
-    last_col <- suppressWarnings(as.numeric(df[[ncol(df)]]))
-
-    if (!all(is.na(last_col)) && all(last_col %in% c(0, 1), na.rm = TRUE)) {
-      df <- df[, -ncol(df), drop = FALSE]
-    }
-  }
-
-  if (!is.null(x$domains) && length(x$domains) == ncol(df)) {
-    names(df) <- x$domains
-  } else {
-    names(df) <- paste0("i", seq_len(ncol(df)))
-  }
-
-  if (symbol_name == "MAP_GIJ" && ncol(df) == 3) {
-    names(df) <- c("G", "I", "J")
-  }
-
-  if (symbol_name == "MAP_RIJ" && ncol(df) == 3) {
-    names(df) <- c("R", "I", "J")
-  }
-
-  if (symbol_name == "MAP_RG" && ncol(df) == 2) {
-    names(df) <- c("R", "G")
-  }
-
-  df
-}
+igdx("C:/GAMS/53")
 data_prep <- "data_prep.gdx"
 data_prep_data <- gdxrrw::rgdx(data_prep)
 
@@ -421,9 +334,10 @@ data_prep_data <- gdxrrw::rgdx(data_prep)
 
         assign(arrayname_nat, nat_array, envir = .GlobalEnv)
 
-        save(
-          list = arrayname_nat,
-          file = file.path("Data_pd", paste0(arrayname_nat, ".rdat"))
+        safe_save_rdata(
+          object_names = arrayname_nat,
+          file = file.path("Data_pd", paste0(arrayname_nat, ".rdat")),
+          envir = .GlobalEnv
         )
 
         # ================================================================
@@ -442,9 +356,10 @@ data_prep_data <- gdxrrw::rgdx(data_prep)
 
         assign(arrayname, tmparray, envir = .GlobalEnv)
 
-        save(
-          list = arrayname,
-          file = file.path("Data_pd", paste0(arrayname, ".rdat"))
+        safe_save_rdata(
+          object_names = arrayname,
+          file = file.path("Data_pd", paste0(arrayname, ".rdat")),
+          envir = .GlobalEnv
         )
 
         invisible(list(

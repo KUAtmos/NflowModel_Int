@@ -525,11 +525,86 @@ save_outleadis_for_visitorn <- function(env, scenario_set, year) {
     paste0("OUTleadis", year_chr, file_suffix, ".rdat")
   )
 
+  temp_file <- tempfile(
+    pattern = paste0(".", basename(out_file), "."),
+    tmpdir = dirname(out_file),
+    fileext = ".tmp"
+  )
+
+  on.exit({
+    if (file.exists(temp_file)) {
+      unlink(temp_file)
+    }
+  }, add = TRUE)
+
+  # Write a complete temporary file first. This prevents a transient
+  # OneDrive lock from leaving a truncated OUTleadis*.rdat file.
   save(
     list = "OUTleadis",
-    file = out_file,
+    file = temp_file,
     envir = env
   )
+
+  replace_ok <- FALSE
+  max_attempts <- 5L
+
+  for (attempt in seq_len(max_attempts)) {
+    copied <- suppressWarnings(
+      file.copy(
+        from = temp_file,
+        to = out_file,
+        overwrite = TRUE,
+        copy.mode = TRUE,
+        copy.date = FALSE
+      )
+    )
+
+    if (isTRUE(copied) && file.exists(out_file)) {
+      source_md5 <- unname(tools::md5sum(temp_file))
+      target_md5 <- unname(tools::md5sum(out_file))
+      replace_ok <- identical(source_md5, target_md5)
+    }
+
+    if (replace_ok) {
+      break
+    }
+
+    if (attempt < max_attempts) {
+      Sys.sleep(1)
+    }
+  }
+
+  if (!replace_ok) {
+    fallback_file <- paste0(
+      out_file,
+      ".new-",
+      format(Sys.time(), "%Y%m%d-%H%M%S")
+    )
+
+    moved <- isTRUE(file.rename(temp_file, fallback_file))
+
+    if (!moved) {
+      moved <- isTRUE(
+        file.copy(temp_file, fallback_file, overwrite = FALSE)
+      )
+    }
+
+    stop(
+      "OUTleadis could not replace the existing file after ",
+      max_attempts,
+      " attempts: ",
+      normalizePath(out_file, winslash = "/", mustWork = FALSE),
+      if (moved) {
+        paste0(
+          "\nA complete replacement file was retained at: ",
+          normalizePath(fallback_file, winslash = "/", mustWork = FALSE)
+        )
+      } else {
+        ""
+      },
+      "\nClose applications using the file or pause OneDrive sync, then rerun."
+    )
+  }
 
   message("Saved OUTleadis: ", out_file)
 
@@ -601,9 +676,16 @@ if (!is.null(MAP_RG_local)) {
 
   save_with_scenario_year <- function(obj_name) {
     if (exists(obj_name, envir = env)) {
+      obj <- get(obj_name, envir = env)
+
+      if ("SCENARIO" %in% names(obj)) {
+        obj <- obj %>%
+          filter(as.character(SCENARIO) == as.character(scenario_set))
+      }
+
       assign(
         paste0(obj_name, "_", scenario_tag, "_", year_chr),
-        get(obj_name, envir = env),
+        obj,
         envir = globalenv()
       )
     } else {
@@ -626,21 +708,28 @@ if (!is.null(MAP_RG_local)) {
   save_with_scenario_year("INfixdis")
 
   save_with_scenario_year("OUTcropdis")
+  save_with_scenario_year("OUTcropcropdis")
+  save_with_scenario_year("OUTcroppasdis")
   save_with_scenario_year("OUTresdis")
+
   save_with_scenario_year("OUTgasdis")
+  save_with_scenario_year("OUTgascropdis")
+  save_with_scenario_year("OUTgaspasdis")
+  save_with_scenario_year("OUTgasdis_N2")
+  save_with_scenario_year("OUTgasdis_NH3")
+  save_with_scenario_year("OUTgasdis_NOx")
+
   save_with_scenario_year("OUTleadis")
 
-    save_with_scenario_year("Inputdis")
-    save_with_scenario_year("OUTgasdis")
-    save_with_scenario_year("VY_load2")
+  save_with_scenario_year("VY_load2")
 
-    if (exists("MAP_GIJ", envir = env)) {
+  if (exists("MAP_GIJ", envir = env)) {
     assign("MAP_GIJ", get("MAP_GIJ", envir = env), envir = globalenv())
-    }
+  }
 
-    if (exists("gridarea2", envir = env)) {
+  if (exists("gridarea2", envir = env)) {
     assign("gridarea2", get("gridarea2", envir = env), envir = globalenv())
-    }
+  }
 
   if (exists("Inputdis", envir = env) && !is.null(MAP_RG_local)) {
     Input_R_one <- get("Inputdis", envir = env) %>%
