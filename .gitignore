@@ -1,0 +1,45 @@
+# R/RStudio session files
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# Generated figures, tables, logs, and completion records
+NflowModel/output/
+VISIToRN/output/
+NflowModel/Shell/*.out
+NflowModel/Shell/*.err
+NflowModel/Shell/log.txt
+NflowModel/Shell/jobreport
+NflowModel/data/Result*.csv
+NflowModel/data/OUTgas_species*.csv
+VISIToRN/log.txt
+VISIToRN/Nload.rdat
+VISIToRN/obs_compare_metrics*.rdat
+VISIToRN/df_river_all*.rdat
+VISIToRN/mcmc_*.rds
+VISIToRN/Data_pd/OUTleadis*.rdat
+VISIToRN/Data_pd/VISITnl_*.rdat
+VISIToRN/Data_pd/df_river_all*.rdat
+VISIToRN/Data_pd/df_Nload_factor_*
+VISIToRN/Data_pd/df_basin_*
+
+# Large external inputs that must be distributed outside Git
+NflowModel/data/livdis_*.nc
+NflowModel/data/results_*.gdx
+NflowModel/data/socref.tif
+VISIToRN/results_*.gdx
+VISIToRN/visit_*.nc
+VISIToRN/luh2_state_*.txt
+
+# Local backups and one-off cluster jobs
+**/backup*/
+pre_manure_update_*/
+*.pre_*
+*.bak
+NflowModel/Shell/psubjob_*node*.sh
+NflowModel/Shell/run_*node*.sh
+NflowModel/Shell/psubjob_gmd_manure_only.sh
+NflowModel/Shell/run_gmd_manure_only.sh
+NflowModel/Shell/psubjob_nflow_replot_only.sh
+NflowModel/Shell/run_nflow_replot_only.sh

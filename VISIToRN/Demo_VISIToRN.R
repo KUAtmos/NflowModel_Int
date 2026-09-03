@@ -24,7 +24,6 @@ if (!exists("dat_dir")) {
 
 if (!exists("ParFit_input")) {
   ParFit_input <- c(982.2591, 12.22721, 2.961817) 
-  #ParFit_input <- c(96.3, 0.422, 1.4)
 }
 if (length(ParFit_input) != 3 || any(!is.finite(ParFit_input))) {
   stop("ParFit_input needs to be a numeric vector of length 3 with finite values.")
@@ -69,4 +68,4 @@ test_sim <-  VISIToRN(dim3 = c(720, 360, 361),
                        dat_humanN = humanN_input,
                        dat_tas = dat_tas,
                        ParFit = ParFit_use
-                     )  
+                     )

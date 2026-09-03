@@ -387,6 +387,46 @@ extract_outgas_species_one_case <- function(env,
     )
   )
 
+  # NH3 emitted before manure N enters the agricultural-soil budget is
+  # calculated separately near the end of RawDataProcess.R.  NH3_loss1 is
+  # volatilization from manure management systems (MMS), whereas NH3_loss2 is
+  # volatilization associated with direct excretion on pasture.  OUTgas_NH3
+  # above is the subsequent agricultural-soil emission from fertilizer and
+  # retained manure N, so the three terms do not overlap.
+  nh3_mms_total <- get_value(
+    env, "NH3_loss1", "ManureStable"
+  )
+  nh3_direct_excretion_total <- get_value(
+    env, "NH3_loss2", "ManurePas"
+  )
+
+  nh3_mms <- tibble::tibble(
+    Species = "NH3_MMS",
+    Cropland = 0,
+    Pasture = 0,
+    Manure_management_systems = nh3_mms_total,
+    Direct_excretion = 0,
+    Total = nh3_mms_total
+  )
+
+  nh3_direct_excretion <- tibble::tibble(
+    Species = "NH3_direct_excretion",
+    Cropland = 0,
+    Pasture = 0,
+    Manure_management_systems = 0,
+    Direct_excretion = nh3_direct_excretion_total,
+    Total = nh3_direct_excretion_total
+  )
+
+  nh3_agriculture_total <- tibble::tibble(
+    Species = "NH3_agriculture_total",
+    Cropland = nh3$Cropland,
+    Pasture = nh3$Pasture,
+    Manure_management_systems = nh3_mms_total,
+    Direct_excretion = nh3_direct_excretion_total,
+    Total = nh3$Total + nh3_mms_total + nh3_direct_excretion_total
+  )
+
   n2 <- tibble::tibble(
     Species = "N2",
     Cropland = get_value(
@@ -454,11 +494,19 @@ extract_outgas_species_one_case <- function(env,
   dplyr::bind_rows(
     n2,
     nh3,
+    nh3_mms,
+    nh3_direct_excretion,
+    nh3_agriculture_total,
     nox,
     n2o,
     total
   ) %>%
     dplyr::mutate(
+      Manure_management_systems = dplyr::coalesce(
+        Manure_management_systems,
+        0
+      ),
+      Direct_excretion = dplyr::coalesce(Direct_excretion, 0),
       Nf = "OUTgas",
       SCENARIO = scenario_label,
       SCENARIOset = scenario_set,
@@ -466,8 +514,132 @@ extract_outgas_species_one_case <- function(env,
     ) %>%
     dplyr::select(
       Nf, Species, SCENARIO, SCENARIOset, YEAR,
-      Cropland, Pasture, Total
+      Cropland, Pasture, Manure_management_systems,
+      Direct_excretion, Total
     )
+}
+
+outgas_species_basis <- c(
+  "N2" = "Direct model output: OUTgas_N2",
+  "NH3" = "Agricultural-soil output: OUTgas_NH3",
+  "NOx" = "5/14 of model OUTgas_NOx pool",
+  "N2O" = "9/14 of model OUTgas_NOx pool",
+  "Total" = "Direct model output: OUTgas"
+)
+
+outgas_species_csv_basis <- c(
+  outgas_species_basis,
+  "NH3_MMS" = paste0(
+    "NH3_loss1: volatilization from manure management systems before ",
+    "manure application"
+  ),
+  "NH3_direct_excretion" = paste0(
+    "NH3_loss2: volatilization associated with direct excretion on ",
+    "pasture before retained N enters the soil budget"
+  ),
+  "NH3_agriculture_total" = paste0(
+    "OUTgas_NH3 + NH3_loss1 + NH3_loss2: total agricultural-sector ",
+    "NH3 emission"
+  )
+)
+
+get_map_rg_for_case <- function(env) {
+  if (exists("MAP_RG", envir = env, inherits = FALSE)) {
+    return(get("MAP_RG", envir = env, inherits = FALSE))
+  }
+
+  if (exists("MAP_RG", envir = globalenv(), inherits = FALSE)) {
+    return(get("MAP_RG", envir = globalenv(), inherits = FALSE))
+  }
+
+  stop("MAP_RG が見つからないため、17地域別のガス排出量を集計できません。")
+}
+
+extract_outgas_species_region_one_case <- function(env,
+                                                   scenario_label,
+                                                   scenario_set,
+                                                   year) {
+  MAP_RG_local <- get_map_rg_for_case(env)
+
+  species_specs <- tibble::tribble(
+    ~Species, ~object_suffix, ~fraction,
+    "N2",    "N2",          1,
+    "NH3",   "NH3",         1,
+    "NOx",   "NOx",         5 / 14,
+    "N2O",   "NOx",         9 / 14,
+    "Total", "",             1
+  )
+
+  land_specs <- tibble::tribble(
+    ~Land_type,  ~object_stem, ~value_col,
+    "Cropland", "OUTgascrop", "OUTgascropgrid",
+    "Pasture",  "OUTgaspas",  "OUTgaspasgrid",
+    "Total",    "OUTgas",     "OUTgasgrid"
+  )
+
+  purrr::pmap_dfr(
+    species_specs,
+    function(Species, object_suffix, fraction) {
+      species_value <- Species
+
+      purrr::pmap_dfr(
+        land_specs,
+        function(Land_type, object_stem, value_col) {
+          land_type_value <- Land_type
+
+          object_name <- if (nzchar(object_suffix)) {
+            paste0(object_stem, "dis_", object_suffix)
+          } else {
+            paste0(object_stem, "dis")
+          }
+
+          if (!exists(object_name, envir = env, inherits = FALSE)) {
+            stop("ガス化学種の地域集計に必要なオブジェクトがありません: ", object_name)
+          }
+
+          gas_grid <- get(object_name, envir = env, inherits = FALSE)
+
+          if (!value_col %in% names(gas_grid)) {
+            stop(object_name, " に列 ", value_col, " がありません。")
+          }
+
+          gas_grid_case <- gas_grid %>%
+            filter(as.character(YEMF) == as.character(year))
+
+          # Some cropland/pasture grid objects are already scoped to the
+          # scenario-specific RawDataProcess environment and therefore do not
+          # retain a SCENARIO column.  Filter it only when it is present.
+          if ("SCENARIO" %in% names(gas_grid_case)) {
+            gas_grid_case <- gas_grid_case %>%
+              filter(as.character(SCENARIO) == as.character(scenario_set))
+          }
+
+          gas_grid_case %>%
+            left_join(MAP_RG_local, by = "G") %>%
+            filter(!is.na(R)) %>%
+            group_by(R) %>%
+            summarise(
+              Value_Tg_N_yr = sum(.data[[value_col]], na.rm = TRUE) * fraction,
+              .groups = "drop"
+            ) %>%
+            mutate(
+              SCENARIO = scenario_label,
+              SCENARIOset = scenario_set,
+              YEAR = as.integer(year),
+              Species = species_value,
+              Land_type = land_type_value,
+              Calculation_basis = unname(
+                outgas_species_basis[[species_value]]
+              )
+            ) %>%
+            select(
+              R, SCENARIO, SCENARIOset, YEAR, Species, Land_type,
+              Value_Tg_N_yr, Calculation_basis
+            )
+        }
+      )
+    }
+  )
 }
 
 copy_if_exists <- function(env, src_candidates, dst_name) {
@@ -525,86 +697,11 @@ save_outleadis_for_visitorn <- function(env, scenario_set, year) {
     paste0("OUTleadis", year_chr, file_suffix, ".rdat")
   )
 
-  temp_file <- tempfile(
-    pattern = paste0(".", basename(out_file), "."),
-    tmpdir = dirname(out_file),
-    fileext = ".tmp"
-  )
-
-  on.exit({
-    if (file.exists(temp_file)) {
-      unlink(temp_file)
-    }
-  }, add = TRUE)
-
-  # Write a complete temporary file first. This prevents a transient
-  # OneDrive lock from leaving a truncated OUTleadis*.rdat file.
   save(
     list = "OUTleadis",
-    file = temp_file,
+    file = out_file,
     envir = env
   )
-
-  replace_ok <- FALSE
-  max_attempts <- 5L
-
-  for (attempt in seq_len(max_attempts)) {
-    copied <- suppressWarnings(
-      file.copy(
-        from = temp_file,
-        to = out_file,
-        overwrite = TRUE,
-        copy.mode = TRUE,
-        copy.date = FALSE
-      )
-    )
-
-    if (isTRUE(copied) && file.exists(out_file)) {
-      source_md5 <- unname(tools::md5sum(temp_file))
-      target_md5 <- unname(tools::md5sum(out_file))
-      replace_ok <- identical(source_md5, target_md5)
-    }
-
-    if (replace_ok) {
-      break
-    }
-
-    if (attempt < max_attempts) {
-      Sys.sleep(1)
-    }
-  }
-
-  if (!replace_ok) {
-    fallback_file <- paste0(
-      out_file,
-      ".new-",
-      format(Sys.time(), "%Y%m%d-%H%M%S")
-    )
-
-    moved <- isTRUE(file.rename(temp_file, fallback_file))
-
-    if (!moved) {
-      moved <- isTRUE(
-        file.copy(temp_file, fallback_file, overwrite = FALSE)
-      )
-    }
-
-    stop(
-      "OUTleadis could not replace the existing file after ",
-      max_attempts,
-      " attempts: ",
-      normalizePath(out_file, winslash = "/", mustWork = FALSE),
-      if (moved) {
-        paste0(
-          "\nA complete replacement file was retained at: ",
-          normalizePath(fallback_file, winslash = "/", mustWork = FALSE)
-        )
-      } else {
-        ""
-      },
-      "\nClose applications using the file or pause OneDrive sync, then rerun."
-    )
-  }
 
   message("Saved OUTleadis: ", out_file)
 
@@ -676,16 +773,9 @@ if (!is.null(MAP_RG_local)) {
 
   save_with_scenario_year <- function(obj_name) {
     if (exists(obj_name, envir = env)) {
-      obj <- get(obj_name, envir = env)
-
-      if ("SCENARIO" %in% names(obj)) {
-        obj <- obj %>%
-          filter(as.character(SCENARIO) == as.character(scenario_set))
-      }
-
       assign(
         paste0(obj_name, "_", scenario_tag, "_", year_chr),
-        obj,
+        get(obj_name, envir = env),
         envir = globalenv()
       )
     } else {
@@ -708,28 +798,21 @@ if (!is.null(MAP_RG_local)) {
   save_with_scenario_year("INfixdis")
 
   save_with_scenario_year("OUTcropdis")
-  save_with_scenario_year("OUTcropcropdis")
-  save_with_scenario_year("OUTcroppasdis")
   save_with_scenario_year("OUTresdis")
-
   save_with_scenario_year("OUTgasdis")
-  save_with_scenario_year("OUTgascropdis")
-  save_with_scenario_year("OUTgaspasdis")
-  save_with_scenario_year("OUTgasdis_N2")
-  save_with_scenario_year("OUTgasdis_NH3")
-  save_with_scenario_year("OUTgasdis_NOx")
-
   save_with_scenario_year("OUTleadis")
 
-  save_with_scenario_year("VY_load2")
+    save_with_scenario_year("Inputdis")
+    save_with_scenario_year("OUTgasdis")
+    save_with_scenario_year("VY_load2")
 
-  if (exists("MAP_GIJ", envir = env)) {
+    if (exists("MAP_GIJ", envir = env)) {
     assign("MAP_GIJ", get("MAP_GIJ", envir = env), envir = globalenv())
-  }
+    }
 
-  if (exists("gridarea2", envir = env)) {
+    if (exists("gridarea2", envir = env)) {
     assign("gridarea2", get("gridarea2", envir = env), envir = globalenv())
-  }
+    }
 
   if (exists("Inputdis", envir = env) && !is.null(MAP_RG_local)) {
     Input_R_one <- get("Inputdis", envir = env) %>%
@@ -758,6 +841,30 @@ if (!is.null(MAP_RG_local)) {
   invisible(NULL)
 }
 
+save_manure_diagnostics <- function(env, scenario_set, year) {
+  diagnostic_objects <- c(
+    "nflow_livestock_diagnostics",
+    "nflow_manure_allocation_diagnostics"
+  )
+  diagnostic_dir <- "../output/manure_diagnostics"
+  dir.create(diagnostic_dir, showWarnings = FALSE, recursive = TRUE)
+
+  for (object_name in diagnostic_objects) {
+    if (!exists(object_name, envir = env, inherits = FALSE)) {
+      warning("Manure diagnostic object was not created: ", object_name)
+      next
+    }
+    output_file <- file.path(
+      diagnostic_dir,
+      paste0(object_name, "_", scenario_set, "_", year, ".csv")
+    )
+    write_csv(get(object_name, envir = env), output_file)
+    message("Saved manure diagnostics: ", output_file)
+  }
+
+  invisible(NULL)
+}
+
 run_rawdataprocess_once <- function(scenario_label,
                                     scenario_set,
                                     year,
@@ -770,6 +877,12 @@ run_rawdataprocess_once <- function(scenario_label,
   env$YEAR <- as.character(year)
 
   sys.source("RawDataProcess.R", envir = env)
+
+  save_manure_diagnostics(
+    env = env,
+    scenario_set = scenario_set,
+    year = year
+  )
 
   save_outleadis_for_visitorn(
     env = env,
@@ -800,7 +913,19 @@ run_rawdataprocess_once <- function(scenario_label,
         YEAR = character(),
         Cropland = numeric(),
         Pasture = numeric(),
+        Manure_management_systems = numeric(),
+        Direct_excretion = numeric(),
         Total = numeric()
+      ),
+      outgas_species_region = tibble(
+        R = character(),
+        SCENARIO = character(),
+        SCENARIOset = character(),
+        YEAR = integer(),
+        Species = character(),
+        Land_type = character(),
+        Value_Tg_N_yr = numeric(),
+        Calculation_basis = character()
       )
     ))
   }
@@ -813,6 +938,12 @@ run_rawdataprocess_once <- function(scenario_label,
       year = year
     ),
     outgas_species = extract_outgas_species_one_case(
+      env = env,
+      scenario_label = scenario_label,
+      scenario_set = scenario_set,
+      year = year
+    ),
+    outgas_species_region = extract_outgas_species_region_one_case(
       env = env,
       scenario_label = scenario_label,
       scenario_set = scenario_set,
@@ -844,22 +975,140 @@ Result <- run_outputs %>%
   arrange(SCENARIO) %>%
   select(Nf, SCENARIO, Cropland, Pasture, Total)
 
-OUTgas_species <- run_outputs %>%
-  map_dfr("outgas_species") %>%
+OUTgas_species_all_unrounded <- run_outputs %>%
+  map_dfr("outgas_species")
+
+soil_gas_species <- c("N2", "NH3", "NOx", "N2O", "Total")
+
+# Keep the original soil-gas table for chemical-species reconciliation and
+# the global/17-region summary.  The public OUTgas_species.csv additionally
+# reports the non-soil NH3 sources and their agricultural-sector sum.
+OUTgas_species_unrounded <- OUTgas_species_all_unrounded %>%
+  filter(Species %in% soil_gas_species)
+
+OUTgas_species <- OUTgas_species_all_unrounded %>%
   mutate(
     SCENARIO = factor(SCENARIO, levels = run_table_result$SCENARIO),
-    Species = factor(Species, levels = c("N2", "NH3", "NOx", "N2O", "Total")),
+    Species = factor(
+      Species,
+      levels = c(
+        "N2", "NH3", "NH3_MMS", "NH3_direct_excretion",
+        "NH3_agriculture_total", "NOx", "N2O", "Total"
+      )
+    ),
     Cropland = round(Cropland, 1),
     Pasture  = round(Pasture, 1),
+    Manure_management_systems = round(Manure_management_systems, 1),
+    Direct_excretion = round(Direct_excretion, 1),
+    Calculation_basis = unname(
+      outgas_species_csv_basis[as.character(Species)]
+    ),
+    Unit = "Tg N yr^-1",
     Total    = round(Total, 1)
   ) %>%
   arrange(SCENARIO, Species) %>%
-  select(Nf, Species, SCENARIO, SCENARIOset, YEAR, Cropland, Pasture, Total)
+  select(
+    Nf, Species, SCENARIO, SCENARIOset, YEAR,
+    Cropland, Pasture, Manure_management_systems,
+    Direct_excretion, Total, Unit, Calculation_basis
+  )
+
+OUTgas_species_17regions_long <- run_outputs %>%
+  map_dfr("outgas_species_region") %>%
+  mutate(
+    SCENARIO = factor(SCENARIO, levels = run_table_result$SCENARIO),
+    Species = factor(Species, levels = c("N2", "NH3", "NOx", "N2O", "Total")),
+    Land_type = factor(Land_type, levels = c("Cropland", "Pasture", "Total")),
+    Value_Tg_N_yr = round(Value_Tg_N_yr, 6)
+  ) %>%
+  arrange(SCENARIO, R, Species, Land_type)
+
+OUTgas_species_17regions <- OUTgas_species_17regions_long %>%
+  select(
+    R, SCENARIO, SCENARIOset, YEAR, Species, Land_type,
+    Value_Tg_N_yr, Calculation_basis
+  ) %>%
+  tidyr::pivot_wider(
+    names_from = Land_type,
+    values_from = Value_Tg_N_yr
+  ) %>%
+  arrange(SCENARIO, R, Species)
+
+OUTgas_species_global_long <- OUTgas_species_unrounded %>%
+  mutate(
+    Spatial_level = "Global",
+    Region = "Global",
+    YEAR = as.integer(YEAR),
+    Calculation_basis = unname(outgas_species_basis[Species])
+  ) %>%
+  tidyr::pivot_longer(
+    cols = c(Cropland, Pasture, Total),
+    names_to = "Land_type",
+    values_to = "Value_Tg_N_yr"
+  ) %>%
+  select(
+    Spatial_level, Region, SCENARIO, SCENARIOset, YEAR, Species,
+    Land_type, Value_Tg_N_yr, Calculation_basis
+  )
+
+OUTgas_species_summary <- OUTgas_species_17regions_long %>%
+  transmute(
+    Spatial_level = "AIM17",
+    Region = R,
+    SCENARIO = as.character(SCENARIO),
+    SCENARIOset,
+    YEAR,
+    Species = as.character(Species),
+    Land_type = as.character(Land_type),
+    Value_Tg_N_yr,
+    Calculation_basis
+  ) %>%
+  bind_rows(
+    OUTgas_species_global_long %>%
+      mutate(
+        SCENARIO = as.character(SCENARIO),
+        Species = as.character(Species),
+        Land_type = as.character(Land_type)
+      )
+  ) %>%
+  mutate(
+    Value_Tg_N_yr = round(Value_Tg_N_yr, 6),
+    Unit = "Tg N yr^-1"
+  ) %>%
+  arrange(SCENARIO, Spatial_level, Region, Species, Land_type)
+
+OUTgas_species_validation <- OUTgas_species_summary %>%
+  group_by(
+    Spatial_level, Region, SCENARIO, SCENARIOset, YEAR, Land_type
+  ) %>%
+  summarise(
+    Component_sum_Tg_N_yr = sum(
+      Value_Tg_N_yr[Species != "Total"],
+      na.rm = TRUE
+    ),
+    Reported_total_Tg_N_yr = Value_Tg_N_yr[Species == "Total"][1],
+    Difference_Tg_N_yr = Component_sum_Tg_N_yr - Reported_total_Tg_N_yr,
+    Pass = abs(Difference_Tg_N_yr) <= 1e-5,
+    .groups = "drop"
+  )
+
+if (any(!OUTgas_species_validation$Pass)) {
+  warning(
+    "ガス化学種の合計とOUTgasの差が許容値を超えた行があります。",
+    " OUTgas_species_validation.csv を確認してください。"
+  )
+}
 
 
 dir.create("../data", showWarnings = FALSE, recursive = TRUE)
 
 write_csv(Result, "../data/Result.csv")
 write_csv(OUTgas_species, "../data/OUTgas_species.csv")
+write_csv(OUTgas_species_17regions, "../data/OUTgas_species_17regions.csv")
+write_csv(OUTgas_species_summary, "../data/OUTgas_species_summary.csv")
+write_csv(OUTgas_species_validation, "../data/OUTgas_species_validation.csv")
 write_csv(Result, "../output/Result.csv")
 write_csv(OUTgas_species, "../output/OUTgas_species.csv")
+write_csv(OUTgas_species_17regions, "../output/OUTgas_species_17regions.csv")
+write_csv(OUTgas_species_summary, "../output/OUTgas_species_summary.csv")
+write_csv(OUTgas_species_validation, "../output/OUTgas_species_validation.csv")

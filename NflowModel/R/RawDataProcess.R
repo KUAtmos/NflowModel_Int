@@ -1,4 +1,40 @@
-Sys.setenv(PATH = paste(Sys.getenv("PATH"), "C:/GAMS/53", sep = ";"))
+# =========================================================
+# GAMS / GDX settings
+# GAMS_DIR is supplied from the shell script.
+# =========================================================
+
+gams_dir <- Sys.getenv("GAMS_DIR", unset = "")
+
+if (!nzchar(gams_dir)) {
+stop(
+"GAMS_DIR is not set.\n",
+"Please set GAMS_DIR in the shell script before running Rscript.\n",
+"Example:\n",
+"  export GAMS_DIR=\"$HOME/gams39.3_linux_x64_64_sfx\""
+)
+}
+
+gams_dir <- normalizePath(
+path.expand(gams_dir),
+winslash = "/",
+mustWork = TRUE
+)
+
+Sys.setenv(
+PATH = paste(gams_dir, Sys.getenv("PATH"), sep = .Platform$path.sep)
+)
+
+if (.Platform$OS.type != "windows") {
+Sys.setenv(
+LD_LIBRARY_PATH = paste(
+gams_dir,
+Sys.getenv("LD_LIBRARY_PATH"),
+sep = .Platform$path.sep
+)
+)
+}
+
+gdxrrw::igdx(gams_dir)
 Sys.which("gams")
 library(dplyr)
 library(tidyr)
@@ -10,6 +46,61 @@ library(Amelia)
 library(stringr)
 library(purrr)
 library(terra)
+
+if (!exists("nflow_impute_body_weight", mode = "function")) {
+  source("manure_future_helpers.R", local = environment())
+}
+
+read_plum_landuse <- function(gdx_file) {
+  candidate_symbols <- c("VY_load", "VYL")
+  load_errors <- character()
+
+  for (symbol_name in candidate_symbols) {
+    landuse_data <- tryCatch(
+      rgdx.param(gdx_file, symbol_name),
+      error = function(e) {
+        load_errors <<- c(
+          load_errors,
+          sprintf("%s: %s", symbol_name, conditionMessage(e))
+        )
+        NULL
+      }
+    )
+
+    if (is.null(landuse_data)) {
+      next
+    }
+
+    if (nrow(landuse_data) == 0) {
+      load_errors <- c(load_errors, sprintf("%s: no records", symbol_name))
+      next
+    }
+
+    required_columns <- c("i1", "i2", "i3", "i4", "value")
+    missing_columns <- setdiff(required_columns, names(landuse_data))
+    if (length(missing_columns) > 0) {
+      stop(
+        sprintf(
+          "AIM-PLUM symbol '%s' in %s has an unexpected structure. Missing columns: %s",
+          symbol_name,
+          gdx_file,
+          paste(missing_columns, collapse = ", ")
+        )
+      )
+    }
+
+    message(sprintf("Loaded AIM-PLUM land-use symbol '%s' from %s", symbol_name, gdx_file))
+    return(landuse_data)
+  }
+
+  stop(
+    sprintf(
+      "Neither 'VY_load' nor 'VYL' could be loaded from %s.\n%s",
+      gdx_file,
+      paste(load_errors, collapse = "\n")
+    )
+  )
+}
 
 if (!exists("SCENARIOset")) SCENARIOset <- "SSP2_BaU_NoCC"
 if (!exists("YEAR")) YEAR <- "2010"
@@ -24,7 +115,7 @@ SCENARIOset2 <- if (SCENARIOset == "SSP2_BaU_NoCC") {
 
 #Fertilizer input
     fert_crop_pasture_ratio <- read_csv("../data/FUBC_1_to_9_data.csv") %>% #input data
-    select("ISO3_code","Year","Crop", "Crop_area_k_ha","N_k_t")
+    dplyr::select("ISO3_code","Year","Crop", "Crop_area_k_ha","N_k_t")
 
     region_iso_17 <- readLines("../data/region_iso_17.map")
     df_region_iso_17 <- do.call(rbind, strsplit(region_iso_17, "\\s+")) %>%
@@ -73,7 +164,7 @@ SCENARIOset2 <- if (SCENARIOset == "SSP2_BaU_NoCC") {
         Other = Other / max_value
       )
 
-    fert_crop_pasture_ratio5 <- amelia(x = fert_crop_pasture_ratio4.5, m = 1000, cs = "RegionCode", ts = "Year") #Grassland and Other mean the amount of fertilizer use (N_k_t)
+    fert_crop_pasture_ratio5 <- amelia(x = fert_crop_pasture_ratio4.5, m = 1000, cs = "RegionCode", ts = "Year", p2s = 0) #Grassland and Other mean the amount of fertilizer use (N_k_t)
 
     imputed_dfs <- lapply(1:1000, function(i) {
       imputed_data <- fert_crop_pasture_ratio5$imputations[[i]]
@@ -160,8 +251,7 @@ SCENARIOset2 <- if (SCENARIOset == "SSP2_BaU_NoCC") {
 
     #Land cover ratio(LC/ΣlonlatLC) from AIM/PLUM
     AIMPLUM_BaU <- file.path("../data", paste0("results_", SCENARIOset, ".gdx"))#input data
-    AIMPLUM_BaU_data <- gdxrrw::rgdx(AIMPLUM_BaU)
-    VY_load <- rgdx.param(AIMPLUM_BaU, 'VY_load') %>%
+    VY_load <- read_plum_landuse(AIMPLUM_BaU) %>%
       rename(G = i4)
 
     data_prep <- "../data/data_prep.gdx"
@@ -194,7 +284,9 @@ SCENARIOset2 <- if (SCENARIOset == "SSP2_BaU_NoCC") {
       mutate(`Area Code (M49)` = str_pad(`Area Code (M49)`, width = 3, pad = "0"))
 
     Areacode_3cha <- read.csv("../data/UNSD_Methodology.csv", stringsAsFactors = FALSE)
-    a_column <- Areacode_3cha$Country_data
+    # The file may contain a UTF-8 BOM, which changes the first column name on
+    # some R/platform combinations. Its first column is always Country_data.
+    a_column <- Areacode_3cha[[1]]
     split_data <- str_split(a_column, ";")
     extracted_data <- lapply(split_data, function(x) {
       three_letters <- x[length(x) - 3]
@@ -438,83 +530,128 @@ SCENARIOset2 <- if (SCENARIOset == "SSP2_BaU_NoCC") {
     INferpasdis <- VY_load_pas2[, c(2,4,5,6)]
 
 #INman
-    livdis_nc <- nc_open(file.path("../data", paste0("livdis_", SCENARIOset, ".nc")))#input data  #mg/m2/year
-    lon <- ncvar_get(livdis_nc, "lon") 
-    lat <- ncvar_get(livdis_nc, "lat") 
-    time <- ncvar_get(livdis_nc, "time") 
-    slnum <- ncvar_get(livdis_nc, "slnum") 
-    livestock_data <- ncvar_get(livdis_nc, "Livestock_number")
-    grid <- expand.grid(lon = lon, lat = lat, time = time, slnum = slnum)
-    final_df <- grid %>%
-      mutate(Livestock_number = as.vector(livestock_data)) %>%
-      filter(!is.na(Livestock_number) & Livestock_number != 0) %>%
-      filter(time == 2010)
-    final_df$J <- (final_df$lon + 179.75) / 0.5 + 1
-    final_df$I <- (89.75 - final_df$lat) / 0.5 + 1 
+    livestock_file <- file.path(
+      "../data",
+      paste0("livdis_", SCENARIOset, ".nc")
+    )
+    if (!file.exists(livestock_file)) {
+      stop("Livestock density file does not exist: ", livestock_file)
+    }
+    body_weight_file <- switch(
+      SCENARIOset,
+      SSP2_BaU_NoCC = "../data/BW_map_BaU.csv",
+      SSP2_500C_CACN_NoCC = "../data/BW_map_500C.csv",
+      stop("Unsupported GMD scenario for body weight: ", SCENARIOset)
+    )
+    if (!file.exists(body_weight_file)) {
+      stop("Livestock body-weight file does not exist: ", body_weight_file)
+    }
 
-    BW_grid <- read_csv("../data/BW_map_BaU.csv")
-    BW_long <- BW_grid %>%
-    rename(BodyWeight = `BodyWeight=`) %>%
-    mutate(
-      row_id = row_number(),
-      slnum  = ceiling((row_id) / 360) 
-    ) %>%
-    filter(slnum >= 1 & slnum <= 8) %>%
-    group_by(slnum) %>%
-    mutate(
-      I    = row_number(),
-      vals = strsplit(BodyWeight, ",")
-    ) %>%
-    ungroup() %>%
-    mutate(
-      vals = map(vals, ~ as.numeric(trimws(.x))),  
-      J    = map(vals, ~ seq_along(.x))    
-    ) %>%
-    unnest(c(J, vals)) %>%
-    transmute(
-      I       = as.integer(I),
-      J       = as.integer(J),
-      slnum   = as.integer(slnum),
-      BodyWeight = vals
+    livdis_nc <- nc_open(livestock_file)
+    lon <- ncvar_get(livdis_nc, "lon")
+    lat <- ncvar_get(livdis_nc, "lat")
+    time <- ncvar_get(livdis_nc, "time")
+    slnum <- ncvar_get(livdis_nc, "slnum")
+
+    # Both managed manure and direct excretion use the requested year's
+    # livestock density. The 2010 slice is retained only for body-weight
+    # imputation in future livestock cells without a valid 2010 grid value.
+    livestock_base_time <- 2010L
+    livestock_change_time <- as.integer(YEAR)
+    livestock_dim_names <- vapply(
+      livdis_nc$var$Livestock_number$dim,
+      function(x) x$name,
+      character(1)
+    )
+    expected_livestock_dims <- c("lon", "lat", "slnum", "time")
+    if (!identical(livestock_dim_names, expected_livestock_dims)) {
+      stop(
+        "Unexpected Livestock_number dimension order in ", livestock_file,
+        ": ", paste(livestock_dim_names, collapse = ", ")
+      )
+    }
+    read_livestock_slice <- function(requested_year) {
+      time_index <- match(as.numeric(requested_year), as.numeric(time))
+      if (is.na(time_index)) {
+        stop(
+          "Livestock NetCDF has no ", requested_year,
+          " time slice: ", livestock_file
+        )
+      }
+      ncvar_get(
+        livdis_nc,
+        "Livestock_number",
+        start = c(1, 1, 1, time_index),
+        count = c(-1, -1, -1, 1),
+        collapse_degen = FALSE
+      )
+    }
+    livestock_base_data <- read_livestock_slice(livestock_base_time)
+    livestock_target_data <- read_livestock_slice(livestock_change_time)
+    nc_close(livdis_nc)
+    nflow_livestock_base_time <- livestock_base_time
+    nflow_livestock_change_time <- livestock_change_time
+    message(
+      "Using future livestock density for managed manure and direct excretion: ",
+      SCENARIOset, " / ", livestock_change_time,
+      "; 2010 body-weight map: ", basename(body_weight_file)
     )
 
-  final_df <- final_df %>%
-  mutate(
-    slnum = as.integer(drop(slnum)),
-    I     = as.integer(drop(I)),
-    J     = as.integer(drop(J))
-  )
+    grid <- expand.grid(
+      lon = lon,
+      lat = lat,
+      slnum = slnum,
+      KEEP.OUT.ATTRS = FALSE,
+      stringsAsFactors = FALSE
+    )
+    make_livestock_heads <- function(values) {
+      grid %>%
+        transmute(
+          I = as.integer(round((89.75 - lat) / 0.5 + 1)),
+          J = as.integer(round((lon + 179.75) / 0.5 + 1)),
+          slnum = as.integer(slnum),
+          Livestock_number = as.numeric(as.vector(values))
+        ) %>%
+        filter(is.finite(Livestock_number) & Livestock_number > 0)
+    }
+    livestock_target_heads_grid <- make_livestock_heads(livestock_target_data)
+    livestock_base_heads_grid <- make_livestock_heads(livestock_base_data)
 
-  BW_long <- BW_long %>%
-  mutate(
-    slnum = as.integer(drop(slnum)),
-    I     = as.integer(drop(I)),
-    J     = as.integer(drop(J))
-  )
-
-
-    final_df <- final_df[, c(3,4,5,6,7)] %>%
-    left_join(BW_long, by = c("I", "J", "slnum")) %>%
-      mutate(Weight = case_when(
-        slnum == 1 ~ Livestock_number * BodyWeight,
-        slnum == 2 ~ Livestock_number * BodyWeight,
-        slnum == 3 ~ Livestock_number * BodyWeight,
-        slnum == 4 ~ Livestock_number * BodyWeight,
-        slnum == 5 ~ Livestock_number * BodyWeight,
-        slnum == 6 ~ Livestock_number * BodyWeight,
-        slnum == 7 ~ Livestock_number * BodyWeight,
-        slnum == 8 ~ Livestock_number * BodyWeight,
-        TRUE ~ NA_real_ 
-      ))
+    body_weight_values <- nflow_read_body_weight_table(
+      body_weight_file,
+      n_species = length(slnum),
+      n_latitude = length(lat),
+      n_longitude = length(lon)
+    )
+    BW_long <- data.frame(
+      I = rep(rep(seq_along(lat), each = length(lon)), times = length(slnum)),
+      J = rep(seq_along(lon), times = length(lat) * length(slnum)),
+      slnum = rep(seq_along(slnum), each = length(lat) * length(lon)),
+      BodyWeight = body_weight_values
+    )
 
     MAP_RIJ <- rgdx.set(data_prep, 'MAP_RIJ')
-    MAP_RIJ$I <- as.numeric(as.character(MAP_RIJ$I))
-    MAP_RIJ$J <- as.numeric(as.character(MAP_RIJ$J))
+    MAP_RIJ$I <- as.integer(as.character(MAP_RIJ$I))
+    MAP_RIJ$J <- as.integer(as.character(MAP_RIJ$J))
+    livestock_bw <- nflow_impute_body_weight(
+      target_heads = livestock_target_heads_grid,
+      reference_heads = livestock_base_heads_grid,
+      body_weight = BW_long,
+      region_map = MAP_RIJ,
+      year = livestock_change_time
+    )
+    nflow_livestock_diagnostics <- livestock_bw$diagnostics %>%
+      mutate(scenario = SCENARIOset)
+    final_df <- livestock_bw$data %>%
+      select(I, J, slnum, Livestock_number, BodyWeight, Weight, R)
+    rm(
+      livestock_bw, livestock_target_heads_grid, livestock_base_heads_grid,
+      livestock_target_data, livestock_base_data, body_weight_values, BW_long
+    )
+
     final_df2 <- final_df %>%
-      left_join(MAP_RIJ, by = c("I", "J")) %>%
-      filter(complete.cases(.)) %>%
       group_by(R, slnum) %>%
-      summarise(ManureStable = sum(Weight)*365/1000) %>% #1000kg/yr
+      summarise(ManureStable = sum(Weight)*365/1000, .groups = "drop") %>% #1000kg/yr
       mutate(ManureStable = case_when(
         slnum == 1 & R %in% c("USA", "CAN")~ ManureStable * (0.15*0.23+0.27*0.6+0.263*0.6+0.108*0.7+0.184*0.78)*(50/80)*0.44, #kgN
         slnum == 1 & R %in% c("XE25")~ ManureStable * (0.357*0.6+0.368*0.6+0.2*0.7+0.07*0.78)*(50/80)*(0.48+0.35)/2,
@@ -568,11 +705,13 @@ SCENARIOset2 <- if (SCENARIOset == "SSP2_BaU_NoCC") {
       summarise(ManureStable = sum(ManureStable)*0.4/1000) %>% #t
       rename(RegionCode = R)
 
-    INmandep <- final_df %>%
-      left_join(MAP_RIJ, by = c("I", "J")) %>%
-      filter(complete.cases(.)) %>%
+    INmandep_species <- final_df %>%
       group_by(R, slnum) %>%
-      summarise(ManureStable = sum(Weight)*365/1000) %>% #1000kg
+      summarise(
+        RawManureMass = sum(Weight)*365/1000,
+        .groups = "drop"
+      ) %>% #1000kg
+      mutate(ManureStable = RawManureMass) %>%
       mutate(ManureStable = case_when(
         slnum == 1 & R %in% c("USA", "CAN")~ ManureStable * 0.92*(30/80)*0.44,
         slnum == 1 & R %in% c("XE25", "XER")~ ManureStable * 0.92*(30/80)*(0.48+0.35)/2,
@@ -611,112 +750,318 @@ SCENARIOset2 <- if (SCENARIOset == "SSP2_BaU_NoCC") {
         slnum == 7 ~ ManureStable * 0.64*0,
         slnum == 8 ~ ManureStable * 0.64*0,
         TRUE ~ NA_real_ 
-      )) %>%
+      ))
+    if (any(!is.finite(INmandep_species$ManureStable) |
+            INmandep_species$ManureStable < 0)) {
+      stop("Direct-excretion coefficients produced invalid regional/species values.")
+    }
+
+    INmandep <- INmandep_species %>%
       group_by(R) %>%
-      summarise(ManurePas = sum(ManureStable)*0.4/1000) %>% #t
-      rename(RegionCode = R)
+      summarise(
+        ManureDirectPas = sum(ManureStable)*0.4/1000,
+        .groups = "drop"
+      ) %>% #t N
+      rename(RegionCode = R) %>%
+      mutate(
+        SCENARIO = SCENARIOset,
+        YEMF = livestock_change_time
+      )
 
-      IAMC_Template_liv <- IAMC_Template %>%
-      filter(VEMF == "Agr_Pro_Liv")
+    # Keep the target-year livestock pattern for direct excretion. Sources in
+    # cells without target-year pasture are redistributed within their region.
+    livestock_grid_map <- MAP_GIJ %>%
+      transmute(
+        G = as.character(G),
+        I = as.integer(as.character(lat)),
+        J = as.integer(as.character(lon))
+      ) %>%
+      distinct(I, J, .keep_all = TRUE)
+    if (anyDuplicated(livestock_grid_map[, c("I", "J")])) {
+      stop("MAP_GIJ must contain at most one N-flow grid for each I/J cell.")
+    }
+    direct_excretion_source <- final_df %>%
+      left_join(
+        INmandep_species %>%
+          select(R, slnum, RawManureMass, ManureStable),
+        by = c("R", "slnum")
+      ) %>%
+      mutate(
+        source_share = if_else(
+          is.finite(RawManureMass) & RawManureMass > 0,
+          (Weight*365/1000)/RawManureMass,
+          0
+        ),
+        ManureDirectSource = source_share*ManureStable*0.4/1000
+      ) %>%
+      left_join(livestock_grid_map, by = c("I", "J")) %>%
+      filter(!is.na(G)) %>%
+      group_by(RegionCode = R, G) %>%
+      summarise(
+        ManureDirectSource = sum(ManureDirectSource, na.rm = TRUE),
+        .groups = "drop"
+      )
 
-    IAMC_Template_liv <- IAMC_Template_liv %>%
-      group_by(REMF, SCENARIO) %>%
-      mutate(Basevalue_2015 = IAMC_Template[YEMF == 2015]) %>%
-      mutate(Change_Rate = IAMC_Template / Basevalue_2015) %>%
-      ungroup()
-    IAMC_Template_liv <- IAMC_Template_liv[, c(1,2,4,7)] %>%
-      rename(RegionCode = REMF)
-
-    Manure_Stable <- IAMC_Template_liv %>%
-      left_join(final_df2, by = "RegionCode") %>%
-      mutate(ManureStable_Y = ManureStable*Change_Rate)
-    Manure_Stable <- Manure_Stable[, c(1,2,3,6)]
+    # livdis already contains the future livestock trajectory. Applying the
+    # AIM-Hub Agr_Pro_Liv/2015 ratio here would double-count that change.
+    Manure_Stable <- final_df2 %>%
+      transmute(
+        RegionCode,
+        SCENARIO = SCENARIOset,
+        YEMF = livestock_change_time,
+        ManureStable_Y = ManureStable
+      )
 
     Manure_4 <- Manure_Stable %>%
       mutate(ManureStable_Y = ManureStable_Y*0.4) 
 
     Manure_6_A <- Manure_4 %>%
       filter(RegionCode %in% c("USA", "XE25", "XER", "TUR", "XOC", "JPN", "CAN", "XAF")) %>%
-      mutate(ManureCrop = ManureStable_Y*0.66, ManurePas = ManureStable_Y*0.34)
+      mutate(
+        ManureCrop = ManureStable_Y*0.66,
+        ManureManagedPas = ManureStable_Y*0.34
+      )
 
     Manure_6_B <- Manure_4 %>%
       filter(RegionCode %in% c("CHN", "IND", "XSE", "XSA", "BRA", "XLM", "CIS", "XME", "XNF")) %>%
-      mutate(ManureCrop = ManureStable_Y*0.9, ManurePas = ManureStable_Y*0.1)
+      mutate(
+        ManureCrop = ManureStable_Y*0.9,
+        ManureManagedPas = ManureStable_Y*0.1
+      )
 
-    Manure_6 <- bind_rows(Manure_6_A, Manure_6_B)
-    Manure_6 <- Manure_6[, c(1,2,3,5,6)]
-    Manure_6$YEMF <- as.numeric(as.character(Manure_6$YEMF)) 
-    Manure_6 <- Manure_6 %>%
-      left_join(INmandep, by = c("RegionCode")) %>%
-      mutate(ManurePas = ManurePas.x + ManurePas.y)
-
-    Manure_6 <- Manure_6[, c(1,2,3,4,7)]
+    Manure_6 <- bind_rows(Manure_6_A, Manure_6_B) %>%
+      select(
+        RegionCode, SCENARIO, YEMF,
+        ManureCrop, ManureManagedPas
+      ) %>%
+      mutate(YEMF = as.numeric(as.character(YEMF))) %>%
+      left_join(
+        INmandep,
+        by = c("RegionCode", "SCENARIO", "YEMF")
+      ) %>%
+      mutate(
+        ManureDirectPas = replace_na(ManureDirectPas, 0),
+        ManurePas = ManureManagedPas + ManureDirectPas
+      ) %>%
+      select(
+        RegionCode, SCENARIO, YEMF, ManureCrop,
+        ManureManagedPas, ManureDirectPas, ManurePas
+      ) %>%
+      filter(as.character(SCENARIO) == SCENARIOset)
+    if (anyDuplicated(Manure_6[, c("RegionCode", "YEMF")])) {
+      stop("Scenario-specific regional manure input is not unique by region/year.")
+    }
 
     VY_load_Crop <- VY_load2 %>%
-      filter(i3 %in% c("PDRIR", "WHTIR", "GROIR", "OSDIR", "C_BIR", "PDRRF", "WHTRF", "GRORF", "OSDRF", "C_BRF", "OTH_A"))
+      filter(
+        i3 %in% c("PDRIR", "WHTIR", "GROIR", "OSDIR", "C_BIR", "PDRRF", "WHTRF", "GRORF", "OSDRF", "C_BRF", "OTH_A"),
+        as.integer(i2) == as.integer(YEAR)
+      )
     VY_load_Crop <- VY_load_Crop[, c(1,2,3,4,7)] %>%
       group_by(i1, i2, G) %>%
-      summarise(LUAREA = sum(LUAREA, na.rm = TRUE)) %>%
+      summarise(LUAREA = sum(LUAREA, na.rm = TRUE), .groups = "drop") %>%
       ungroup()
 
     Sum_Cropland <- VY_load_Crop %>%
       group_by(i1, i2) %>%
-      summarise(sum_LUAREA = sum(LUAREA))
+      summarise(sum_LUAREA = sum(LUAREA, na.rm = TRUE), .groups = "drop")
 
     VY_load_Crop2 <- VY_load_Crop %>%
       left_join(Sum_Cropland, by = c("i1", "i2")) %>%
-      mutate(LURATIO = LUAREA/sum_LUAREA)
+      mutate(
+        LURATIO = if_else(
+          is.finite(LUAREA) & is.finite(sum_LUAREA) & sum_LUAREA > 0,
+          LUAREA/sum_LUAREA,
+          0
+        )
+      )
     VY_load_Crop2 <- VY_load_Crop2[, c(1,2,3,6)] %>%
       rename(RegionCode = i1, YEMF = i2)
 
     VY_load_PAS <- VY_load2 %>%
-      filter(i3 %in% c("PAS"))
-    VY_load_PAS <- VY_load_PAS[, c(1,2,4,7)]
+      filter(i3 == "PAS", as.integer(i2) == as.integer(YEAR))
+    VY_load_PAS <- VY_load_PAS[, c(1,2,4,7)] %>%
+      group_by(i1, i2, G) %>%
+      summarise(LUAREA = sum(LUAREA, na.rm = TRUE), .groups = "drop")
 
     Sum_Pasture <- VY_load_PAS %>%
       group_by(i1, i2) %>%
-      summarise(sum_LUAREA = sum(LUAREA))
+      summarise(sum_LUAREA = sum(LUAREA, na.rm = TRUE), .groups = "drop")
 
     VY_load_PAS2 <- VY_load_PAS %>%
       left_join(Sum_Pasture, by = c("i1", "i2")) %>%
-      mutate(LURATIO = LUAREA/sum_LUAREA)
+      mutate(
+        LURATIO = if_else(
+          is.finite(LUAREA) & is.finite(sum_LUAREA) & sum_LUAREA > 0,
+          LUAREA/sum_LUAREA,
+          0
+        )
+      )
     VY_load_PAS2 <- VY_load_PAS2[, c(1,2,3,6)] %>%
-      rename(RegionCode = i1, YEMF = i2)
+      rename(RegionCode = i1, YEMF = i2) %>%
+      mutate(
+        RegionCode = as.character(RegionCode),
+        YEMF = as.integer(as.character(YEMF)),
+        G = as.character(G)
+      )
 
     Manure_7_Crop <- VY_load_Crop2 %>%
-      left_join(Manure_6[, c(1:4)], by = c("RegionCode", "YEMF")) %>%
-      mutate(ManureCropGrid = ManureCrop*LURATIO)
-    Manure_7_Crop <- Manure_7_Crop[, c(1,2,3,5,7)] %>%
-      mutate(ManureCropGrid = ManureCropGrid/1000000) #TgN/yr
+      mutate(
+        RegionCode = as.character(RegionCode),
+        YEMF = as.integer(as.character(YEMF)),
+        G = as.character(G)
+      ) %>%
+      left_join(
+        Manure_6 %>% select(RegionCode, SCENARIO, YEMF, ManureCrop),
+        by = c("RegionCode", "YEMF")
+      ) %>%
+      mutate(ManureCropGrid = ManureCrop*LURATIO/1000000) %>% #TgN/yr
+      select(RegionCode, YEMF, G, SCENARIO, ManureCropGrid)
 
+    direct_excretion_allocation <- nflow_allocate_direct_excretion(
+      source = direct_excretion_source %>%
+        transmute(RegionCode, G, tN = ManureDirectSource),
+      regional_total = INmandep %>%
+        transmute(RegionCode, YEMF, SCENARIO, tN = ManureDirectPas),
+      pasture_allocation = VY_load_PAS2
+    )
     Manure_7_Pas <- VY_load_PAS2 %>%
-      left_join(Manure_6[, c(1,2,3,5)], by = c("RegionCode", "YEMF")) %>%
-      mutate(ManurePasGrid = ManurePas*LURATIO)
-    Manure_7_Pas <- Manure_7_Pas[, c(1,2,3,5,7)] %>%
-      mutate(ManurePasGrid = ManurePasGrid/1000000) #TgN/yr
+      left_join(
+        Manure_6 %>%
+          select(RegionCode, SCENARIO, YEMF, ManureManagedPas),
+        by = c("RegionCode", "YEMF")
+      ) %>%
+      left_join(
+        direct_excretion_allocation %>%
+          select(
+            RegionCode, YEMF, SCENARIO, G,
+            ManureDirectSourceGrid = source_tN,
+            ManureDirectRedistributedGrid = redistributed_tN,
+            ManureDirectPasGrid_tN = tN
+          ),
+        by = c("RegionCode", "YEMF", "SCENARIO", "G")
+      ) %>%
+      mutate(
+        ManureDirectSourceGrid = replace_na(ManureDirectSourceGrid, 0),
+        ManureDirectRedistributedGrid =
+          replace_na(ManureDirectRedistributedGrid, 0),
+        ManureDirectPasGrid_tN = replace_na(ManureDirectPasGrid_tN, 0),
+        ManureManagedPasGrid = ManureManagedPas*LURATIO/1000000,
+        ManureDirectPasGrid = ManureDirectPasGrid_tN/1000000,
+        ManurePasGrid = ManureManagedPasGrid + ManureDirectPasGrid
+      ) %>%
+      select(
+        RegionCode, YEMF, G, SCENARIO,
+        ManureManagedPasGrid, ManureDirectPasGrid,
+        ManureDirectSourceGrid, ManureDirectRedistributedGrid,
+        ManurePasGrid
+      )
+
+    nflow_manure_allocation_diagnostics <- Manure_6 %>%
+      select(
+        RegionCode, YEMF, SCENARIO,
+        expected_managed_crop_tN = ManureCrop,
+        expected_managed_pasture_tN = ManureManagedPas,
+        expected_direct_pasture_tN = ManureDirectPas
+      ) %>%
+      left_join(
+        Manure_7_Crop %>%
+          group_by(RegionCode, YEMF, SCENARIO) %>%
+          summarise(
+            allocated_managed_crop_tN = sum(ManureCropGrid)*1000000,
+            .groups = "drop"
+          ),
+        by = c("RegionCode", "YEMF", "SCENARIO")
+      ) %>%
+      left_join(
+        Manure_7_Pas %>%
+          group_by(RegionCode, YEMF, SCENARIO) %>%
+          summarise(
+            allocated_managed_pasture_tN =
+              sum(ManureManagedPasGrid, na.rm = TRUE)*1000000,
+            allocated_direct_pasture_tN =
+              sum(ManureDirectPasGrid, na.rm = TRUE)*1000000,
+            retained_direct_source_tN =
+              sum(ManureDirectSourceGrid, na.rm = TRUE),
+            redistributed_direct_tN =
+              sum(ManureDirectRedistributedGrid, na.rm = TRUE),
+            .groups = "drop"
+          ),
+        by = c("RegionCode", "YEMF", "SCENARIO")
+      ) %>%
+      mutate(
+        managed_crop_residual_tN =
+          allocated_managed_crop_tN - expected_managed_crop_tN,
+        managed_pasture_residual_tN =
+          allocated_managed_pasture_tN - expected_managed_pasture_tN,
+        direct_pasture_residual_tN =
+          allocated_direct_pasture_tN - expected_direct_pasture_tN
+      )
+    manure_balance_columns <- c(
+      "managed_crop_residual_tN",
+      "managed_pasture_residual_tN",
+      "direct_pasture_residual_tN"
+    )
+    manure_balance_scale <- pmax(
+      1,
+      nflow_manure_allocation_diagnostics$expected_managed_crop_tN,
+      nflow_manure_allocation_diagnostics$expected_managed_pasture_tN,
+      nflow_manure_allocation_diagnostics$expected_direct_pasture_tN
+    )
+    invalid_manure_balance <- !complete.cases(
+      nflow_manure_allocation_diagnostics[, manure_balance_columns]
+    ) | apply(
+      abs(nflow_manure_allocation_diagnostics[, manure_balance_columns]) >
+        1e-9*manure_balance_scale,
+      1,
+      any
+    )
+    if (any(invalid_manure_balance)) {
+      stop("Regional manure allocation failed its mass-balance check.")
+    }
 
     Manure_7 <- Manure_7_Crop %>%
       full_join(Manure_7_Pas, by = c("RegionCode", "YEMF", "G", "SCENARIO")) %>%
       mutate(ManureCropGrid = ifelse(is.na(ManureCropGrid), 0, ManureCropGrid)) %>%
       mutate(ManurePasGrid = ifelse(is.na(ManurePasGrid), 0, ManurePasGrid)) %>%
       mutate(ManureGrid = ManureCropGrid + ManurePasGrid)
-    Manure_7 <- Manure_7[, c(1,2,3,4,7)]
+    Manure_7 <- Manure_7 %>%
+      select(RegionCode, YEMF, G, SCENARIO, ManureGrid)
 
     INman <- Manure_7 %>%
       group_by(YEMF, SCENARIO) %>%
-      summarise(INman = sum(ManureGrid))
+      summarise(INman = sum(ManureGrid), .groups = "drop")
 
     INmancrop <- Manure_7_Crop %>%
       group_by(YEMF, SCENARIO) %>%
-      summarise(INman = sum(ManureCropGrid))
+      summarise(INman = sum(ManureCropGrid), .groups = "drop")
 
     INmanpas <- Manure_7_Pas %>%
       group_by(YEMF, SCENARIO) %>%
-      summarise(INman = sum(ManurePasGrid))
+      summarise(INman = sum(ManurePasGrid), .groups = "drop")
 
-    INmandis <- Manure_7[, c(2,3,4,5)]
-    INmancropdis <- Manure_7_Crop[, c(2,3,4,5)]
-    INmanpasdis <- Manure_7_Pas[, c(2,3,4,5)]
+    # Aggregate border-grid contributions before downstream joins.
+    INmandis <- Manure_7 %>%
+      group_by(YEMF, G, SCENARIO) %>%
+      summarise(ManureGrid = sum(ManureGrid, na.rm = TRUE), .groups = "drop")
+    INmancropdis <- Manure_7_Crop %>%
+      group_by(YEMF, G, SCENARIO) %>%
+      summarise(ManureCropGrid = sum(ManureCropGrid, na.rm = TRUE), .groups = "drop")
+    INmanpasdis <- Manure_7_Pas %>%
+      group_by(YEMF, G, SCENARIO) %>%
+      summarise(ManurePasGrid = sum(ManurePasGrid, na.rm = TRUE), .groups = "drop")
+    INmanmanagedpasdis <- Manure_7_Pas %>%
+      group_by(YEMF, G, SCENARIO) %>%
+      summarise(
+        ManureManagedPasGrid = sum(ManureManagedPasGrid, na.rm = TRUE),
+        .groups = "drop"
+      )
+    INmandirectpasdis <- Manure_7_Pas %>%
+      group_by(YEMF, G, SCENARIO) %>%
+      summarise(
+        ManureDirectPasGrid = sum(ManureDirectPasGrid, na.rm = TRUE),
+        .groups = "drop"
+      )
 
 #N deposition
     nc <- nc_open(file.path("../data", paste0("0505NDRYMON_", SCENARIOset2, YEAR, ".nc"))) #input data(dry) #mg/m2/year
@@ -1555,10 +1900,8 @@ SCENARIOset2 <- if (SCENARIOset == "SSP2_BaU_NoCC") {
 
 #NH3 other loss
     NH3_loss1 <- final_df %>%
-      left_join(MAP_RIJ, by = c("I", "J")) %>%
-      filter(complete.cases(.)) %>%
       group_by(R, slnum) %>%
-      summarise(ManureStable = sum(Weight)*365*0.4/1000) %>% #1000kg #other loss
+      summarise(ManureStable = sum(Weight)*365*0.4/1000, .groups = "drop") %>% #1000kg #other loss
       ungroup() %>%
       mutate(ManureStable = case_when(
         slnum == 1 & R %in% c("USA", "CAN")~ ManureStable *( 1-(0.15*0.23+0.27*0.6+0.263*0.6+0.108*0.7+0.184*0.78))*(50/80)*0.44, #kgN
@@ -1615,10 +1958,8 @@ SCENARIOset2 <- if (SCENARIOset == "SSP2_BaU_NoCC") {
 
 
     NH3_loss2 <- final_df %>%
-      left_join(MAP_RIJ, by = c("I", "J")) %>%
-      filter(complete.cases(.)) %>%
       group_by(R, slnum) %>%
-      summarise(ManureStable = sum(Weight)*365*0.4/1000) %>% #kg #other loss
+      summarise(ManureStable = sum(Weight)*365*0.4/1000, .groups = "drop") %>% #kg #other loss
       ungroup() %>%
        mutate(ManureStable = case_when(
         slnum == 1 & R %in% c("USA", "CAN")~ ManureStable * (1-0.92)*(30/80)*0.44,

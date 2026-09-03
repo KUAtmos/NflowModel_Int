@@ -1,4 +1,3 @@
-select <- dplyr::select
 current_wd <- getwd()
 current_wd_norm <- normalizePath(current_wd, winslash = "/", mustWork = TRUE)
 
@@ -46,9 +45,135 @@ library(readr)
 library(forcats)
 library(purrr)
 
-source("safe_save_rdata.R", local = .GlobalEnv)
+if (.Platform$OS.type == "windows") {
+  gams_dir <- "C:/GAMS/53"
+} else {
+  gams_dir <- normalizePath(
+    path.expand("~/gams39.3_linux_x64_64_sfx"),
+    mustWork = TRUE
+  )
+}
 
-igdx("C:/GAMS/53")
+Sys.setenv(
+  PATH = paste(gams_dir, Sys.getenv("PATH"), sep = .Platform$path.sep)
+)
+
+gdxrrw::igdx(gams_dir)
+
+message("GAMS path: ", Sys.which("gams"))
+
+array_output_dir <- Sys.getenv("VISITORN_ARRAY_OUTPUT_DIR", unset = "Data_pd")
+dir.create(array_output_dir, recursive = TRUE, showWarnings = FALSE)
+array_output_dir <- normalizePath(
+  array_output_dir,
+  winslash = "/",
+  mustWork = TRUE
+)
+message("VISIToRN array output directory: ", array_output_dir)
+
+rgdx.param <- function(gdx_file, symbol_name) {
+  x <- gdxrrw::rgdx(
+    gdx_file,
+    list(
+      name = symbol_name,
+      form = "sparse"
+    )
+  )
+
+  df <- as.data.frame(x$val, stringsAsFactors = FALSE)
+
+  if (ncol(df) < 2) {
+    stop("Unexpected GDX parameter format: ", symbol_name)
+  }
+
+  n_dim <- ncol(df) - 1
+
+  if (length(x$uels) != n_dim) {
+    stop(
+      "Unexpected number of GDX dimensions for ", symbol_name,
+      ": val has ", n_dim, " dimensions but uels has ", length(x$uels)
+    )
+  }
+
+  # Sparse GDX output stores UEL positions, not the labels themselves. UEL
+  # positions are local to each GDX file, so they must be decoded before a
+  # symbol from a results GDX is joined to a symbol from data_prep.gdx.
+  for (dimension in seq_len(n_dim)) {
+    index <- suppressWarnings(as.integer(df[[dimension]]))
+    if (anyNA(index) || any(index < 1L | index > length(x$uels[[dimension]]))) {
+      stop("Invalid UEL index in ", symbol_name, " dimension ", dimension)
+    }
+    df[[dimension]] <- x$uels[[dimension]][index]
+  }
+
+  valid_domains <-
+    !is.null(x$domains) &&
+    length(x$domains) == n_dim &&
+    all(nzchar(x$domains)) &&
+    all(x$domains != "*") &&
+    !anyDuplicated(x$domains)
+
+  if (valid_domains) {
+    names(df)[seq_len(n_dim)] <- x$domains
+  } else {
+    names(df)[seq_len(n_dim)] <- paste0("i", seq_len(n_dim))
+  }
+
+  names(df)[ncol(df)] <- "value"
+
+  df[[symbol_name]] <- df$value
+
+  df
+}
+
+
+rgdx.set <- function(gdx_file, symbol_name) {
+  x <- gdxrrw::rgdx(
+    gdx_file,
+    list(
+      name = symbol_name,
+      form = "sparse"
+    )
+  )
+
+  df <- as.data.frame(x$val, stringsAsFactors = FALSE)
+
+  n_dim <- length(x$uels)
+  if (n_dim < 1L || ncol(df) < n_dim) {
+    stop("Unexpected GDX set format: ", symbol_name)
+  }
+
+  df <- df[, seq_len(n_dim), drop = FALSE]
+  for (dimension in seq_len(n_dim)) {
+    index <- suppressWarnings(as.integer(df[[dimension]]))
+    if (anyNA(index) || any(index < 1L | index > length(x$uels[[dimension]]))) {
+      stop("Invalid UEL index in ", symbol_name, " dimension ", dimension)
+    }
+    df[[dimension]] <- x$uels[[dimension]][index]
+  }
+
+  if (!is.null(x$domains) && length(x$domains) == n_dim &&
+      all(nzchar(x$domains)) && all(x$domains != "*") &&
+      !anyDuplicated(x$domains)) {
+    names(df) <- x$domains
+  } else {
+    names(df) <- paste0("i", seq_len(n_dim))
+  }
+
+  if (symbol_name == "MAP_GIJ" && ncol(df) == 3) {
+    names(df) <- c("G", "I", "J")
+  }
+
+  if (symbol_name == "MAP_RIJ" && ncol(df) == 3) {
+    names(df) <- c("R", "I", "J")
+  }
+
+  if (symbol_name == "MAP_RG" && ncol(df) == 2) {
+    names(df) <- c("R", "G")
+  }
+
+  df
+}
 data_prep <- "data_prep.gdx"
 data_prep_data <- gdxrrw::rgdx(data_prep)
 
@@ -197,7 +322,7 @@ data_prep_data <- gdxrrw::rgdx(data_prep)
 
           VY_load2 <- VY_load %>%
             left_join(GA, by = "G") %>%
-            mutate(LUAREA = value * GA * 1000) # ha
+            mutate(LUAREA = VY_load * GA * 1000) # ha
 
           LUAREA_Region <- VY_load2 %>%
             group_by(i1, i2, i3) %>%
@@ -334,10 +459,9 @@ data_prep_data <- gdxrrw::rgdx(data_prep)
 
         assign(arrayname_nat, nat_array, envir = .GlobalEnv)
 
-        safe_save_rdata(
-          object_names = arrayname_nat,
-          file = file.path("Data_pd", paste0(arrayname_nat, ".rdat")),
-          envir = .GlobalEnv
+        save(
+          list = arrayname_nat,
+          file = file.path(array_output_dir, paste0(arrayname_nat, ".rdat"))
         )
 
         # ================================================================
@@ -356,10 +480,9 @@ data_prep_data <- gdxrrw::rgdx(data_prep)
 
         assign(arrayname, tmparray, envir = .GlobalEnv)
 
-        safe_save_rdata(
-          object_names = arrayname,
-          file = file.path("Data_pd", paste0(arrayname, ".rdat")),
-          envir = .GlobalEnv
+        save(
+          list = arrayname,
+          file = file.path(array_output_dir, paste0(arrayname, ".rdat"))
         )
 
         invisible(list(
@@ -387,6 +510,24 @@ data_prep_data <- gdxrrw::rgdx(data_prep)
         stringsAsFactors = FALSE
       )
 
+      run_plan$case <- paste0(
+        run_plan$YEAR,
+        ifelse(run_plan$SCENARIOset == "SSP2_500C_CACN_NoCC", "mit", "")
+      )
+      requested_cases <- trimws(strsplit(
+        Sys.getenv("VISITORN_CASES", unset = ""),
+        ",",
+        fixed = TRUE
+      )[[1L]])
+      requested_cases <- requested_cases[nzchar(requested_cases)]
+      if (length(requested_cases) > 0L) {
+        unknown_cases <- setdiff(requested_cases, run_plan$case)
+        if (length(unknown_cases) > 0L) {
+          stop("Unknown VISITORN_CASES: ", paste(unknown_cases, collapse = ", "))
+        }
+        run_plan <- run_plan[run_plan$case %in% requested_cases, , drop = FALSE]
+      }
+
       for (i in seq_len(nrow(run_plan))) {
         make_visit_array(
           SCENARIOset = run_plan$SCENARIOset[i],
@@ -395,6 +536,13 @@ data_prep_data <- gdxrrw::rgdx(data_prep)
         )
       }
       #=================================================
+
+      run_river_after_array <- !tolower(Sys.getenv(
+        "VISITORN_ARRAY_ONLY",
+        unset = "false"
+      )) %in% c("1", "true", "yes")
+
+      if (run_river_after_array) {
 
 #River aggregate
         # =========================================================
@@ -515,3 +663,9 @@ data_prep_data <- gdxrrw::rgdx(data_prep)
           dpi = 300,
           bg = "white"
         )
+      } else {
+        message(
+          "VISITORN_ARRAY_ONLY is enabled: leaching arrays were created; ",
+          "river simulation and plotting were skipped."
+        )
+      }

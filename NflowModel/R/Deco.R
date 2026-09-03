@@ -6,23 +6,8 @@
     library(purrr)
     library(readr)
     library(gdxrrw)
-    library(ggplot2)
-
-    if (!exists("safe_save_rdata", mode = "function")) {
-      source("safe_save_rdata.R", local = .GlobalEnv)
-    }
 
     target_years <- c(2010, 2030, 2050, 2100)
-
-    print_all_rows <- function(x) {
-      if (inherits(x, "tbl")) {
-        print(x, n = Inf)
-      } else {
-        print(x, row.names = FALSE)
-      }
-
-      invisible(x)
-    }
 
     crop_classes <- c(
       "PDRIR", "WHTIR", "GROIR", "OSDIR", "C_BIR",
@@ -159,6 +144,8 @@
         SCENARIO == "SSP2"
       )
 
+    # data_prep がまだ定義されていない場合のみ指定
+    # 必要に応じてパスは調整してください
     if (!exists("data_prep")) {
       data_prep <- "Data_pd/data_prep.gdx"
     }
@@ -171,36 +158,15 @@
       rename(REMF = R) %>%
       select(REMF, lat_idx, lon_idx)
 
-MAP_RIJ_weighted <- MAP_RIJ %>%
-  dplyr::group_by(REMF) %>%
-  dplyr::mutate(
-    n_grid = dplyr::n(),
-    population_weight = 1 / n_grid
-  ) %>%
-  dplyr::ungroup()
-
-POPratio <- IAMC_Template_POP %>%
-
-  dplyr::left_join(
-    MAP_RIJ_weighted,
-    by = "REMF",
-    relationship = "many-to-many"
-  ) %>%
-
-  dplyr::mutate(
-    IAMC_Template =
-      IAMC_Template *
-      population_weight,
-
-    lat = lat_idx,
-    lon = lon_idx,
-
-    lat_center =
-      idx_to_lat(lat_idx),
-
-    lon_center =
-      idx_to_lon(lon_idx)
-  )
+    # lat/lon という列名は残すが、中身は「グリッド番号」として統一
+    POPratio <- IAMC_Template_POP %>%
+      left_join(MAP_RIJ, by = "REMF") %>%
+      mutate(
+        lat = lat_idx,
+        lon = lon_idx,
+        lat_center = idx_to_lat(lat_idx),
+        lon_center = idx_to_lon(lon_idx)
+      )
 
     # =========================================================
     # Aggregate population by river basin
@@ -306,7 +272,7 @@ POPratio <- IAMC_Template_POP %>%
 
       if (nrow(vy) == 0) {
         stop(
-          "No data available for scenario: ",
+          "対象となる土地利用データがありません: ",
           scenario_case,
           " / ",
           target_year
@@ -449,7 +415,7 @@ POPratio <- IAMC_Template_POP %>%
     print(vy_plan)
 
     if (nrow(vy_plan) == 0) {
-      stop("No VY_load2 objects found for the specified scenarios and years.")
+      stop("VY_load2_<scenario>_<year> 形式のオブジェクトが見つかりません。")
     }
 
     # =========================================================
@@ -480,7 +446,7 @@ POPratio <- IAMC_Template_POP %>%
 
     df_basin_agarea_per_pop_all %>%
       count(scenario_case, year) %>%
-      print_all_rows()
+      print(n = Inf)
 
     df_basin_agarea_per_pop_all %>%
       summarise(
@@ -496,15 +462,13 @@ POPratio <- IAMC_Template_POP %>%
     # =========================================================
     # Save
     # =========================================================
-    safe_save_rdata(
-      object_names = "df_basin_pop",
-      envir = environment(),
+    save(
+      df_basin_pop,
       file = "Data_pd/df_basin_population_SSP2.rdat"
     )
 
-    safe_save_rdata(
-      object_names = "df_basin_agarea_per_pop_all",
-      envir = environment(),
+    save(
+      df_basin_agarea_per_pop_all,
       file = "Data_pd/df_basin_agarea_per_pop_all.rdat"
     )
 
@@ -529,7 +493,7 @@ POPratio <- IAMC_Template_POP %>%
 
     if (length(missing_input_cols) > 0) {
       stop(
-        "No required columns found in Inputdis object: ",
+        "Inputdis object に必要な列がありません: ",
         paste(missing_input_cols, collapse = ", ")
       )
     }
@@ -539,7 +503,7 @@ POPratio <- IAMC_Template_POP %>%
     } else if ("Input" %in% names(Inputdis_one)) {
       "Input"
     } else {
-      stop("No 'input' or 'Input' column found in Inputdis object.")
+      stop("Inputdis object に input または Input 列が見つかりません。")
     }
 
     # ---------------------------------------------------------
@@ -550,7 +514,7 @@ POPratio <- IAMC_Template_POP %>%
 
     if (length(missing_vy_cols) > 0) {
       stop(
-        "No required columns found in VY_load2 object: ",
+        "VY_load2 object に必要な列がありません: ",
         paste(missing_vy_cols, collapse = ", ")
       )
     }
@@ -641,18 +605,21 @@ POPratio <- IAMC_Template_POP %>%
         ),
         scenario_case = scenario_case,
 
+        # input_value が Tg N yr-1 の場合
         input_TgN_per_ha = dplyr::if_else(
           !is.na(ag_area_ha) & ag_area_ha > 0,
           input_value / ag_area_ha,
           NA_real_
         ),
 
+        # input_value が Tg N yr-1 の場合: kg N ha-1 yr-1
         input_kgN_per_ha = dplyr::if_else(
           !is.na(ag_area_ha) & ag_area_ha > 0,
           input_value * 1e9 / ag_area_ha,
           NA_real_
         ),
 
+        # 参考: kg N km-2 yr-1
         input_kgN_per_km2 = dplyr::if_else(
           !is.na(ag_area_ha) & ag_area_ha > 0,
           input_value * 1e9 / (ag_area_ha * 0.01),
@@ -700,7 +667,7 @@ POPratio <- IAMC_Template_POP %>%
   print(input_plan)
 
   if (nrow(input_plan) == 0) {
-    stop("No Inputdis objects found for the specified scenarios and years.")
+    stop("Inputdis_<scenario>_<year> 形式のオブジェクトが見つかりません。")
   }
 
   missing_vy <- input_plan$object_vy[
@@ -709,7 +676,7 @@ POPratio <- IAMC_Template_POP %>%
 
   if (length(missing_vy) > 0) {
     stop(
-      "No corresponding VY_load2 objects found: ",
+      "対応する VY_load2 オブジェクトが見つかりません: ",
       paste(missing_vy, collapse = ", ")
     )
   }
@@ -744,7 +711,7 @@ POPratio <- IAMC_Template_POP %>%
 
   df_basin_input_per_area_all %>%
     dplyr::count(scenario_case, year) %>%
-    print_all_rows()
+    print(n = Inf)
 
   df_basin_input_per_area_all %>%
     dplyr::group_by(scenario_case, year) %>%
@@ -760,418 +727,18 @@ POPratio <- IAMC_Template_POP %>%
       max_input_kgN_per_ha = max(input_kgN_per_ha, na.rm = TRUE),
       .groups = "drop"
     ) %>%
-    print_all_rows()
+    print(n = Inf)
 
   # =========================================================
   # Save
   # =========================================================
 
-  safe_save_rdata(
-    object_names = "df_basin_input_per_area_all",
-    envir = environment(),
+  save(
+    df_basin_input_per_area_all,
     file = "Data_pd/df_basin_input_per_area_all.rdat"
   )
 
   #kgN ha-1 yr-1
-
-# =========================================================
-# Basin-level nitrogen input, gaseous loss, and harvest
-#
-# All flow amounts in this section are Tg N yr-1.
-# OUTgasdis_NOx contains the combined NOx + N2O term used by
-# RawDataProcess.R. It is split here with the same 5:9 ratio
-# used in Make_Result_csv.r.
-# =========================================================
-
-make_g_to_basin <- function(VY_load2_one,
-                            target_year,
-                            rivnum_matrix) {
-
-  required_vy_cols <- c("G", "i2", "lat", "lon")
-  missing_vy_cols <- setdiff(required_vy_cols, names(VY_load2_one))
-
-  if (length(missing_vy_cols) > 0) {
-    stop(
-      "No required columns found in VY_load2 object: ",
-      paste(missing_vy_cols, collapse = ", ")
-    )
-  }
-
-  basin_grid <- make_basin_grid(rivnum_matrix) %>%
-    dplyr::select(lon_idx, lat_idx, rivnum)
-
-  g_to_basin <- VY_load2_one %>%
-    standardize_grid_index(lat_col = "lat", lon_col = "lon") %>%
-    dplyr::mutate(
-      G = as.character(G),
-      year = as.integer(as.character(i2))
-    ) %>%
-    dplyr::filter(year == target_year) %>%
-    dplyr::distinct(G, lon_idx, lat_idx) %>%
-    dplyr::left_join(basin_grid, by = c("lon_idx", "lat_idx")) %>%
-    dplyr::filter(!is.na(rivnum), rivnum > 0) %>%
-    dplyr::transmute(
-      G,
-      rivnum = as.integer(as.character(rivnum))
-    ) %>%
-    dplyr::distinct()
-
-  ambiguous_g <- g_to_basin %>%
-    dplyr::count(G, name = "n_basin") %>%
-    dplyr::filter(n_basin > 1)
-
-  if (nrow(ambiguous_g) > 0) {
-    stop(
-      "Some G cells map to more than one river basin. ",
-      "Example G values: ",
-      paste(utils::head(ambiguous_g$G, 10), collapse = ", ")
-    )
-  }
-
-  g_to_basin
-}
-
-aggregate_grid_flow_by_basin <- function(grid_df,
-                                         value_col,
-                                         target_year,
-                                         g_to_basin,
-                                         scenario_set = NULL) {
-
-  required_cols <- c("G", "YEMF", value_col)
-  missing_cols <- setdiff(required_cols, names(grid_df))
-
-  if (length(missing_cols) > 0) {
-    stop(
-      "No required columns found in grid flow object: ",
-      paste(missing_cols, collapse = ", ")
-    )
-  }
-
-  if (
-    !is.null(scenario_set) &&
-      "SCENARIO" %in% names(grid_df)
-  ) {
-    grid_df <- grid_df %>%
-      dplyr::filter(
-        as.character(SCENARIO) == as.character(scenario_set)
-      )
-  }
-
-  grid_df %>%
-    dplyr::transmute(
-      G = as.character(G),
-      year = as.integer(as.character(YEMF)),
-      flow_value = as.numeric(.data[[value_col]])
-    ) %>%
-    dplyr::filter(year == target_year) %>%
-    dplyr::group_by(G) %>%
-    dplyr::summarise(
-      flow_value = sum(flow_value, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    dplyr::left_join(g_to_basin, by = "G") %>%
-    dplyr::filter(!is.na(rivnum), rivnum > 0) %>%
-    dplyr::group_by(rivnum) %>%
-    dplyr::summarise(
-      flow_value = sum(flow_value, na.rm = TRUE),
-      .groups = "drop"
-    )
-}
-
-basin_nflow_specs <- tibble::tribble(
-  ~object_prefix,       ~value_col,             ~result_col,                         ~required,
-  "INferdis",           "Fert_Use_Grid",        "Ninput_fertilizer_TgN_yr",          TRUE,
-  "INmandis",           "ManureGrid",           "Ninput_manure_TgN_yr",              TRUE,
-  "INdepdis",           "N_deposition_grid",    "Ninput_deposition_TgN_yr",          TRUE,
-  "INfixdis",           "N_fix",                "Ninput_fixation_TgN_yr",            TRUE,
-  "Inputdis",           "Input",                "Ninput_total_TgN_yr",               TRUE,
-  "OUTcropdis",         "CropN",                "Nharvest_total_TgN_yr",              TRUE,
-  "OUTcropcropdis",     "CropN",                "Ncrop_harvest_TgN_yr",               FALSE,
-  "OUTcroppasdis",      "OUTcroppas",           "Npasture_uptake_TgN_yr",             FALSE,
-  "OUTresdis",          "OUTresgrid",           "Ncrop_residue_TgN_yr",               TRUE,
-  "OUTgasdis",          "OUTgasgrid",           "Ngas_total_TgN_yr",                 TRUE,
-  "OUTgascropdis",      "OUTgascropgrid",       "Ngas_cropland_TgN_yr",              FALSE,
-  "OUTgaspasdis",       "OUTgaspasgrid",        "Ngas_pasture_TgN_yr",               FALSE,
-  "OUTgasdis_N2",       "OUTgasgrid",           "Ngas_N2_TgN_yr",                    FALSE,
-  "OUTgasdis_NH3",      "OUTgasgrid",           "Ngas_NH3_TgN_yr",                   FALSE,
-  "OUTgasdis_NOx",      "OUTgasgrid",           "Ngas_NOx_N2O_combined_TgN_yr",      FALSE,
-  "OUTleadis",          "OUTleagrid",           "Nleaching_TgN_yr",                  TRUE
-)
-
-aggregate_one_basin_nflow <- function(scenario_case,
-                                      scenario_set,
-                                      target_year,
-                                      VY_load2_one,
-                                      rivnum_matrix,
-                                      riv_table,
-                                      specs = basin_nflow_specs) {
-
-  g_to_basin <- make_g_to_basin(
-    VY_load2_one = VY_load2_one,
-    target_year = target_year,
-    rivnum_matrix = rivnum_matrix
-  )
-
-  basin_result <- g_to_basin %>%
-    dplyr::distinct(rivnum)
-
-  for (i in seq_len(nrow(specs))) {
-    object_name <- paste0(
-      specs$object_prefix[i],
-      "_",
-      scenario_case,
-      "_",
-      target_year
-    )
-    result_col <- specs$result_col[i]
-
-    if (!exists(object_name, envir = .GlobalEnv)) {
-      if (isTRUE(specs$required[i])) {
-        stop("No required object found: ", object_name)
-      }
-
-      warning(
-        "Optional object not found; values will be NA: ",
-        object_name
-      )
-      basin_result[[result_col]] <- NA_real_
-      next
-    }
-
-    one_flow <- aggregate_grid_flow_by_basin(
-      grid_df = get(object_name, envir = .GlobalEnv),
-      value_col = specs$value_col[i],
-      target_year = target_year,
-      g_to_basin = g_to_basin,
-      scenario_set = scenario_set
-    )
-
-    names(one_flow)[names(one_flow) == "flow_value"] <- result_col
-
-    basin_result <- basin_result %>%
-      dplyr::left_join(one_flow, by = "rivnum")
-
-    basin_result[[result_col]][
-      is.na(basin_result[[result_col]])
-    ] <- 0
-  }
-
-  river_names <- riv_table %>%
-    dplyr::transmute(
-      rivnum = as.integer(as.character(rivnum)),
-      river_basin_name = as.character(river_basin_name)
-    ) %>%
-    dplyr::distinct(rivnum, .keep_all = TRUE)
-
-  basin_result %>%
-    dplyr::left_join(river_names, by = "rivnum") %>%
-    dplyr::mutate(
-      scenario_case = scenario_case,
-      scenario_set = scenario_set,
-      year = as.integer(target_year),
-
-      Ninput_components_sum_TgN_yr =
-        Ninput_fertilizer_TgN_yr +
-        Ninput_manure_TgN_yr +
-        Ninput_deposition_TgN_yr +
-        Ninput_fixation_TgN_yr,
-
-      Ninput_closure_error_TgN_yr =
-        Ninput_total_TgN_yr -
-        Ninput_components_sum_TgN_yr,
-
-      Nharvest_components_sum_TgN_yr =
-        Ncrop_harvest_TgN_yr +
-        Npasture_uptake_TgN_yr,
-
-      Nharvest_closure_error_TgN_yr =
-        Nharvest_total_TgN_yr -
-        Nharvest_components_sum_TgN_yr,
-
-      Ncrop_harvest_plus_residue_TgN_yr =
-        Ncrop_harvest_TgN_yr +
-        Ncrop_residue_TgN_yr,
-
-      Ngas_land_sum_TgN_yr =
-        Ngas_cropland_TgN_yr +
-        Ngas_pasture_TgN_yr,
-
-      Ngas_land_closure_error_TgN_yr =
-        Ngas_total_TgN_yr -
-        Ngas_land_sum_TgN_yr,
-
-      Ngas_NOx_TgN_yr =
-        Ngas_NOx_N2O_combined_TgN_yr * 5 / 14,
-
-      Ngas_N2O_TgN_yr =
-        Ngas_NOx_N2O_combined_TgN_yr * 9 / 14,
-
-      Ngas_species_sum_TgN_yr =
-        Ngas_N2_TgN_yr +
-        Ngas_NH3_TgN_yr +
-        Ngas_NOx_TgN_yr +
-        Ngas_N2O_TgN_yr,
-
-      Ngas_species_closure_error_TgN_yr =
-        Ngas_total_TgN_yr -
-        Ngas_species_sum_TgN_yr,
-
-      Noutput_components_sum_TgN_yr =
-        Nharvest_total_TgN_yr +
-        Ncrop_residue_TgN_yr +
-        Ngas_total_TgN_yr +
-        Nleaching_TgN_yr,
-
-      Nbudget_closure_error_TgN_yr =
-        Ninput_total_TgN_yr -
-        Noutput_components_sum_TgN_yr,
-
-      Ngas_Ninput_ratio = dplyr::if_else(
-        !is.na(Ninput_total_TgN_yr) &
-          Ninput_total_TgN_yr > 0,
-        Ngas_total_TgN_yr / Ninput_total_TgN_yr,
-        NA_real_
-      ),
-
-      Ncrop_harvest_Ninput_ratio = dplyr::if_else(
-        !is.na(Ninput_total_TgN_yr) &
-          Ninput_total_TgN_yr > 0,
-        Ncrop_harvest_TgN_yr / Ninput_total_TgN_yr,
-        NA_real_
-      ),
-
-      Nharvest_total_Ninput_ratio = dplyr::if_else(
-        !is.na(Ninput_total_TgN_yr) &
-          Ninput_total_TgN_yr > 0,
-        Nharvest_total_TgN_yr / Ninput_total_TgN_yr,
-        NA_real_
-      ),
-
-      Nleaching_Ninput_ratio = dplyr::if_else(
-        !is.na(Ninput_total_TgN_yr) &
-          Ninput_total_TgN_yr > 0,
-        Nleaching_TgN_yr / Ninput_total_TgN_yr,
-        NA_real_
-      )
-    ) %>%
-    dplyr::select(
-      scenario_case,
-      scenario_set,
-      year,
-      rivnum,
-      river_basin_name,
-      dplyr::everything()
-    ) %>%
-    dplyr::arrange(rivnum)
-}
-
-nflow_case_plan <- input_plan %>%
-  dplyr::transmute(
-    scenario_case,
-    scenario_set = dplyr::case_when(
-      scenario_case == "BaU" ~ "SSP2_BaU_NoCC",
-      scenario_case == "500C" ~ "SSP2_500C_CACN_NoCC",
-      TRUE ~ NA_character_
-    ),
-    year,
-    object_vy
-  ) %>%
-  dplyr::distinct() %>%
-  dplyr::filter(!is.na(scenario_set)) %>%
-  dplyr::arrange(scenario_case, year)
-
-df_basin_nflow_all <- dplyr::bind_rows(
-  lapply(seq_len(nrow(nflow_case_plan)), function(k) {
-
-    message(
-      "Processing basin N flows: ",
-      nflow_case_plan$scenario_case[k],
-      " / ",
-      nflow_case_plan$year[k]
-    )
-
-    aggregate_one_basin_nflow(
-      scenario_case = nflow_case_plan$scenario_case[k],
-      scenario_set = nflow_case_plan$scenario_set[k],
-      target_year = nflow_case_plan$year[k],
-      VY_load2_one = get(
-        nflow_case_plan$object_vy[k],
-        envir = .GlobalEnv
-      ),
-      rivnum_matrix = rivnum_matrix,
-      riv_table = riv_table
-    )
-  })
-)
-
-basin_nflow_long_cols <- c(
-  "Ninput_fertilizer_TgN_yr",
-  "Ninput_manure_TgN_yr",
-  "Ninput_deposition_TgN_yr",
-  "Ninput_fixation_TgN_yr",
-  "Ninput_total_TgN_yr",
-  "Ncrop_harvest_TgN_yr",
-  "Npasture_uptake_TgN_yr",
-  "Nharvest_total_TgN_yr",
-  "Ncrop_residue_TgN_yr",
-  "Ngas_cropland_TgN_yr",
-  "Ngas_pasture_TgN_yr",
-  "Ngas_N2_TgN_yr",
-  "Ngas_NH3_TgN_yr",
-  "Ngas_NOx_TgN_yr",
-  "Ngas_N2O_TgN_yr",
-  "Ngas_total_TgN_yr",
-  "Nleaching_TgN_yr"
-)
-
-df_basin_nflow_long <- df_basin_nflow_all %>%
-  tidyr::pivot_longer(
-    cols = dplyr::all_of(basin_nflow_long_cols),
-    names_to = "flow",
-    values_to = "value_TgN_yr"
-  ) %>%
-  dplyr::mutate(
-    flow_group = dplyr::case_when(
-      stringr::str_starts(flow, "Ninput_") ~ "input",
-      stringr::str_starts(flow, "Ngas_") ~ "gas",
-      flow == "Ncrop_residue_TgN_yr" ~ "residue",
-      flow == "Nleaching_TgN_yr" ~ "leaching",
-      TRUE ~ "harvest"
-    )
-  ) %>%
-  dplyr::select(
-    scenario_case,
-    scenario_set,
-    year,
-    rivnum,
-    river_basin_name,
-    flow_group,
-    flow,
-    value_TgN_yr
-  )
-
-df_basin_nflow_all %>%
-  dplyr::count(scenario_case, year) %>%
-  print_all_rows()
-
-safe_save_rdata(
-  object_names = c(
-    "df_basin_nflow_all",
-    "df_basin_nflow_long"
-  ),
-  envir = environment(),
-  file = "Data_pd/df_basin_nflow_all.rdat"
-)
-
-readr::write_csv(
-  df_basin_nflow_all,
-  "Data_pd/df_basin_nflow_all.csv"
-)
-
-readr::write_csv(
-  df_basin_nflow_long,
-  "Data_pd/df_basin_nflow_long.csv"
-)
 
 #Nleach/Ninput
   # =========================================================
@@ -1194,7 +761,7 @@ readr::write_csv(
 
     if (length(missing_leach_cols) > 0) {
       stop(
-        "No required columns found in OUTleadis object: ",
+        "OUTleadis object に必要な列がありません: ",
         paste(missing_leach_cols, collapse = ", ")
       )
     }
@@ -1207,7 +774,7 @@ readr::write_csv(
 
     if (length(missing_vy_cols) > 0) {
       stop(
-        "No required columns found in VY_load2 object: ",
+        "VY_load2 object に必要な列がありません: ",
         paste(missing_vy_cols, collapse = ", ")
       )
     }
@@ -1348,7 +915,7 @@ readr::write_csv(
   print(leach_plan)
 
   if (nrow(leach_plan) == 0) {
-    stop("No OUTleadis objects found for the specified scenarios and years.")
+    stop("OUTleadis_<scenario>_<year> 形式のオブジェクトが見つかりません。")
   }
 
   missing_vy <- leach_plan$object_vy[
@@ -1357,13 +924,13 @@ readr::write_csv(
 
   if (length(missing_vy) > 0) {
     stop(
-      "No corresponding VY_load2 objects found: ",
+      "対応する VY_load2 オブジェクトが見つかりません: ",
       paste(missing_vy, collapse = ", ")
     )
   }
 
   if (!exists("df_basin_input_per_area_all")) {
-    stop("No df_basin_input_per_area_all found. Please run the input/area aggregation first.")
+    stop("df_basin_input_per_area_all が見つかりません。先に Ninput/Area の計算を実行してください。")
   }
 
   # =========================================================
@@ -1396,7 +963,7 @@ readr::write_csv(
 
   df_basin_leach_per_input_all %>%
     dplyr::count(scenario_case, year) %>%
-    print_all_rows()
+    print(n = Inf)
 
   df_basin_leach_per_input_all %>%
     dplyr::group_by(scenario_case, year) %>%
@@ -1414,15 +981,14 @@ readr::write_csv(
       max_percent = max(Nleach_Ninput_percent, na.rm = TRUE),
       .groups = "drop"
     ) %>%
-    print_all_rows()
+    print(n = Inf)
 
   # =========================================================
   # Save
   # =========================================================
 
-  safe_save_rdata(
-    object_names = "df_basin_leach_per_input_all",
-    envir = environment(),
+  save(
+    df_basin_leach_per_input_all,
     file = "Data_pd/df_basin_leach_per_input_all.rdat"
   )
 
@@ -1447,11 +1013,11 @@ readr::write_csv(
       }
 
       if (!"rivnum" %in% names(load_df)) {
-        stop("No 'rivnum' column found in Nload data frame: ", case_label)
+        stop("Nload data frame に rivnum 列が見つかりません: ", case_label)
       }
 
       if (!"Nload" %in% names(load_df)) {
-        stop("No 'Nload' column found in Nload data frame: ", case_label)
+        stop("Nload data frame に Nload 列が見つかりません: ", case_label)
       }
 
       name_col <- if ("river_basin_name" %in% names(load_df)) {
@@ -1592,11 +1158,11 @@ readr::write_csv(
     print(load_plan)
 
     if (nrow(load_plan) == 0) {
-      stop("No df_river_named_mouth_YYYY or df_river_named_mouth_YYYYmit objects found.")
+      stop("df_river_named_mouth_YYYY または df_river_named_mouth_YYYYmit 形式のオブジェクトが見つかりません。")
     }
 
     if (!exists("df_basin_leach_per_input_all")) {
-      stop("No df_basin_leach_per_input_all found. Please run the Nleach/Ninput calculation first.")
+      stop("df_basin_leach_per_input_all が見つかりません。先に Nleach/Ninput の計算を実行してください。")
     }
 
     df_basin_load_per_leach_all <- dplyr::bind_rows(
@@ -1617,549 +1183,334 @@ readr::write_csv(
 
     df_basin_load_per_leach_all %>%
       dplyr::count(scenario_case, year) %>%
-      print_all_rows()
+      print(n = Inf)
 
-    safe_save_rdata(
-      object_names = "df_basin_load_per_leach_all",
-      envir = environment(),
+    save(
+      df_basin_load_per_leach_all,
       file = "Data_pd/df_basin_load_per_leach_all.rdat"
     )
 
-# =========================================================
-# Analysis-ready basin table:
-# river N load + terrestrial N-flow components
-# =========================================================
+#LMDI
+    # =========================================================
+    # 1. Prepare factor table
+    # =========================================================
 
-df_basin_nflow_load_all <- df_basin_load_per_leach_all %>%
-  dplyr::rename(
-    river_basin_name_load = river_basin_name
-  ) %>%
-  dplyr::full_join(
-    df_basin_nflow_all %>%
-      dplyr::rename(
-        river_basin_name_nflow = river_basin_name
-      ),
-    by = c("scenario_case", "year", "rivnum")
-  ) %>%
-  dplyr::mutate(
-    river_basin_name = dplyr::coalesce(
-      river_basin_name_load,
-      river_basin_name_nflow
-    ),
+    df_factor_identity_all <- df_basin_load_per_leach_all %>%
+      dplyr::mutate(
+        scenario_case = as.character(scenario_case),
+        year = as.integer(year),
+        rivnum = as.integer(as.character(rivnum)),
+        Nload_GgN = as.numeric(Nload_GgN),
+        Nleach_Ninput = as.numeric(Nleach_Ninput_ratio),
+        Nload_Nleach = as.numeric(Nload_Nleach_ratio)
+      ) %>%
+      dplyr::select(
+        scenario_case,
+        year,
+        rivnum,
+        river_basin_name,
+        Nload_GgN,
+        Nleach_Ninput,
+        Nload_Nleach
+      ) %>%
+      dplyr::left_join(
+        df_basin_agarea_per_pop_all %>%
+          dplyr::mutate(
+            scenario_case = as.character(scenario_case),
+            year = as.integer(year),
+            rivnum = as.integer(as.character(rivnum)),
+            POP = as.numeric(population),
+            Area_POP_ha_per_person = as.numeric(ag_area_ha_per_person),
+            Area_POP_m2_per_person = as.numeric(ag_area_m2_per_person),
+            ag_area_ha = as.numeric(ag_area_ha)
+          ) %>%
+          dplyr::select(
+            scenario_case,
+            year,
+            rivnum,
+            POP,
+            Area_POP_ha_per_person,
+            Area_POP_m2_per_person,
+            ag_area_ha
+          ),
+        by = c("scenario_case", "year", "rivnum")
+      ) %>%
+      dplyr::left_join(
+        df_basin_input_per_area_all %>%
+          dplyr::mutate(
+            scenario_case = as.character(scenario_case),
+            year = as.integer(year),
+            rivnum = as.integer(as.character(rivnum)),
+            Ninput_TgN = as.numeric(input_value),
+            Ninput_GgN = Ninput_TgN * 1000,
+            Ninput_Area_GgN_per_ha = Ninput_GgN / as.numeric(ag_area_ha),
+            Ninput_Area_kgN_per_ha = as.numeric(input_kgN_per_ha)
+          ) %>%
+          dplyr::select(
+            scenario_case,
+            year,
+            rivnum,
+            Ninput_TgN,
+            Ninput_GgN,
+            Ninput_Area_GgN_per_ha,
+            Ninput_Area_kgN_per_ha
+          ),
+        by = c("scenario_case", "year", "rivnum")
+      ) %>%
+      dplyr::mutate(
+        # 恒等式の再構成値
+        # POP [person]
+        # Area_POP [ha person-1]
+        # Ninput_Area [Gg N ha-1 yr-1]
+        # ratios [-]
+        Nload_reconstructed_GgN =
+          POP *
+          Area_POP_ha_per_person *
+          Ninput_Area_GgN_per_ha *
+          Nleach_Ninput *
+          Nload_Nleach,
 
-    Ninput_crosscheck_error_TgN_yr =
-      Ninput_total_TgN_yr -
-      Ninput_value,
-
-    Nleaching_crosscheck_error_TgN_yr =
-      Nleaching_TgN_yr -
-      Nleach_TgN,
-
-    Nload_Ninput_ratio = dplyr::if_else(
-      !is.na(Ninput_total_TgN_yr) &
-        Ninput_total_TgN_yr > 0,
-      Nload_TgN / Ninput_total_TgN_yr,
-      NA_real_
-    ),
-
-    Nload_Ninput_percent =
-      100 * Nload_Ninput_ratio
-  ) %>%
-  dplyr::select(
-    scenario_case,
-    scenario_set,
-    year,
-    rivnum,
-    river_basin_name,
-    Nload_kgN,
-    Nload_GgN,
-    Nload_TgN,
-    Nleach_kgN,
-    Nleach_GgN,
-    Nleach_TgN,
-    Nload_Nleach_ratio,
-    Nload_Nleach_percent,
-    Nload_Ninput_ratio,
-    Nload_Ninput_percent,
-    dplyr::everything(),
-    -river_basin_name_load,
-    -river_basin_name_nflow
-  ) %>%
-  dplyr::arrange(
-    scenario_case,
-    year,
-    rivnum
-  )
-
-safe_save_rdata(
-  object_names = "df_basin_nflow_load_all",
-  envir = environment(),
-  file = "Data_pd/df_basin_nflow_load_all.rdat"
-)
-
-readr::write_csv(
-  df_basin_nflow_load_all,
-  "Data_pd/df_basin_nflow_load_all.csv"
-)
-
-# =========================================================
-# Construct factor identity table for differential analysis
-#
-# Nload =
-#   POP
-#   * Area/POP
-#   * Ninput/Area
-#   * Nleach/Ninput
-#   * Nload/Nleach
-# =========================================================
-
-factor_key <- c(
-  "scenario_case",
-  "year",
-  "rivnum"
-)
-
-# ---------------------------------------------------------
-# Check that each table has only one row per
-# scenario × year × river basin
-# ---------------------------------------------------------
-
-assert_unique_factor_key <- function(df, object_name) {
-
-  duplicated_keys <- df %>%
-    dplyr::group_by(
-      dplyr::across(
-        dplyr::all_of(factor_key)
+        reconstruction_error_GgN = Nload_reconstructed_GgN - Nload_GgN,
+        reconstruction_error_pct = 100 * reconstruction_error_GgN / Nload_GgN
       )
-    ) %>%
-    dplyr::summarise(
-      n = dplyr::n(),
-      .groups = "drop"
-    ) %>%
-    dplyr::filter(n > 1)
 
-  if (nrow(duplicated_keys) > 0) {
+    # =========================================================
+    # 2. Check identity
+    # =========================================================
 
-    print(
-      duplicated_keys,
-      n = 20
-    )
+    df_factor_identity_all %>%
+      dplyr::group_by(scenario_case, year) %>%
+      dplyr::summarise(
+        n = dplyr::n(),
+        mean_abs_error_GgN = mean(abs(reconstruction_error_GgN), na.rm = TRUE),
+        max_abs_error_GgN = max(abs(reconstruction_error_GgN), na.rm = TRUE),
+        mean_abs_error_pct = mean(abs(reconstruction_error_pct), na.rm = TRUE),
+        max_abs_error_pct = max(abs(reconstruction_error_pct), na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      print(n = Inf)
 
-    stop(
-      object_name,
-      " has duplicate keys for scenario × year × river basin. Please check the data."
-    )
-  }
+    # =========================================================
+    # 3. LMDI utility functions
+    # =========================================================
 
-  invisible(TRUE)
-}
+    log_mean <- function(x, y) {
+      out <- rep(NA_real_, length(x))
 
+      valid <- is.finite(x) & is.finite(y) & x > 0 & y > 0
 
-# =========================================================
-# POP and Area/POP
-# =========================================================
+      equal <- valid & abs(x - y) <= sqrt(.Machine$double.eps) * pmax(abs(x), abs(y), 1)
 
-factor_area_tbl <- df_basin_agarea_per_pop_all %>%
-  dplyr::transmute(
-    scenario_case = as.character(scenario_case),
-    year = as.integer(year),
-    rivnum = as.integer(as.character(rivnum)),
+      out[equal] <- x[equal]
 
-    POP = as.numeric(population),
+      not_equal <- valid & !equal
+      out[not_equal] <- (x[not_equal] - y[not_equal]) / (log(x[not_equal]) - log(y[not_equal]))
 
-    Area_POP_ha_per_person =
-      as.numeric(ag_area_ha_per_person),
+      out
+    }
 
-    ag_area_ha =
-      as.numeric(ag_area_ha)
-  )
+    replace_nonpositive_by_epsilon <- function(x) {
+      positive_min <- suppressWarnings(min(x[is.finite(x) & x > 0], na.rm = TRUE))
 
+      if (!is.finite(positive_min)) {
+        stop("正の値が存在しないため、LMDI 用の epsilon を設定できません。")
+      }
 
-# =========================================================
-# Ninput/Area
-# =========================================================
+      eps <- positive_min * 1e-12
 
-factor_input_tbl <- df_basin_input_per_area_all %>%
-  dplyr::transmute(
-    scenario_case = as.character(scenario_case),
-    year = as.integer(year),
-    rivnum = as.integer(as.character(rivnum)),
-
-    Ninput_TgN =
-      as.numeric(input_value),
-
-    # input_value: Tg N yr-1
-    Ninput_GgN =
-      as.numeric(input_value) * 1000,
-
-    # Gg N ha-1 yr-1
-    Ninput_Area_GgN_per_ha =
-      as.numeric(input_kgN_per_ha) / 1e6
-  )
-
-
-# =========================================================
-# Nleach/Ninput
-# =========================================================
-
-factor_leach_tbl <- df_basin_leach_per_input_all %>%
-  dplyr::transmute(
-    scenario_case = as.character(scenario_case),
-    year = as.integer(year),
-    rivnum = as.integer(as.character(rivnum)),
-
-    Nleach_TgN =
-      as.numeric(Nleach_value),
-
-    Nleach_Ninput =
-      as.numeric(Nleach_Ninput_ratio)
-  )
-
-
-# =========================================================
-# Nload/Nleach and Nload
-# =========================================================
-
-factor_load_tbl <- df_basin_load_per_leach_all %>%
-  dplyr::transmute(
-    scenario_case = as.character(scenario_case),
-    year = as.integer(year),
-    rivnum = as.integer(as.character(rivnum)),
-    river_basin_name = as.character(river_basin_name),
-
-    Nload_GgN =
-      as.numeric(Nload_GgN),
-
-    Nload_Nleach =
-      as.numeric(Nload_Nleach_ratio)
-  )
-
-
-# =========================================================
-# Check duplicate keys before joining
-# =========================================================
-
-assert_unique_factor_key(
-  factor_area_tbl,
-  "factor_area_tbl"
-)
-
-assert_unique_factor_key(
-  factor_input_tbl,
-  "factor_input_tbl"
-)
-
-assert_unique_factor_key(
-  factor_leach_tbl,
-  "factor_leach_tbl"
-)
-
-assert_unique_factor_key(
-  factor_load_tbl,
-  "factor_load_tbl"
-)
-
-
-# =========================================================
-# Join all factors
-# =========================================================
-
-df_factor_identity_all <- factor_load_tbl %>%
-
-  dplyr::left_join(
-    factor_area_tbl,
-    by = factor_key
-  ) %>%
-
-  dplyr::left_join(
-    factor_input_tbl,
-    by = factor_key
-  ) %>%
-
-  dplyr::left_join(
-    factor_leach_tbl,
-    by = factor_key
-  ) %>%
-
-  dplyr::mutate(
-    # Reconstructed Nload
-    # person
-    # × ha person-1
-    # × Gg N ha-1 yr-1
-    # × dimensionless
-    # × dimensionless
-    # = Gg N yr-1
-
-    Nload_reconstructed_GgN =
-      POP *
-      Area_POP_ha_per_person *
-      Ninput_Area_GgN_per_ha *
-      Nleach_Ninput *
-      Nload_Nleach,
-
-    reconstruction_error_GgN =
-      Nload_reconstructed_GgN -
-      Nload_GgN,
-
-    reconstruction_error_percent =
       dplyr::if_else(
-        !is.na(Nload_GgN) &
-          Nload_GgN != 0,
-
-        100 *
-          reconstruction_error_GgN /
-          Nload_GgN,
-
-        NA_real_
+        is.finite(x) & x > 0,
+        x,
+        eps
       )
-  )
+    }
 
-# =========================================================
-factor_vars_diff <- c(
-  "POP",
-  "Area_POP_ha_per_person",
-  "Ninput_Area_GgN_per_ha",
-  "Nleach_Ninput",
-  "Nload_Nleach",
-  "Nload_GgN"
-)
+    # =========================================================
+    # 4. Prepare base year and future year pairs
+    # =========================================================
 
-df_factor_for_diff <- df_factor_identity_all %>%
-  dplyr::mutate(
-    scenario_case = as.character(scenario_case),
-    year = as.integer(year),
-    rivnum = as.integer(as.character(rivnum)),
-    dplyr::across(
-      dplyr::all_of(factor_vars_diff),
-      as.numeric
-    ),
-
-    Nload_product_GgN =
-      POP *
-      Area_POP_ha_per_person *
-      Ninput_Area_GgN_per_ha *
-      Nleach_Ninput *
-      Nload_Nleach,
-
-    identity_error_GgN =
-      Nload_product_GgN - Nload_GgN
-  )
-
-  # =========================================================
-# Base year: BaU 2010
-# =========================================================
-
-base_2010_diff <- df_factor_for_diff %>%
-  dplyr::filter(
-    scenario_case == "BaU",
-    year == 2010
-  ) %>%
-  dplyr::select(
-    rivnum,
-    river_basin_name_0 = river_basin_name,
-
-    P_0 = POP,
-    A_0 = Area_POP_ha_per_person,
-    I_0 = Ninput_Area_GgN_per_ha,
-    L_0 = Nleach_Ninput,
-    R_0 = Nload_Nleach,
-
-    Y_0_product_GgN = Nload_product_GgN,
-    Y_0_original_GgN = Nload_GgN
-  )
-
-# =========================================================
-# Future values
-# =========================================================
-
-future_diff <- df_factor_for_diff %>%
-  dplyr::filter(
-    scenario_case %in% c("BaU", "500C"),
-    year %in% c(2030, 2050, 2100)
-  ) %>%
-  dplyr::select(
-    scenario_case,
-    year,
-    rivnum,
-    river_basin_name,
-
-    P_t = POP,
-    A_t = Area_POP_ha_per_person,
-    I_t = Ninput_Area_GgN_per_ha,
-    L_t = Nleach_Ninput,
-    R_t = Nload_Nleach,
-
-    Y_t_product_GgN = Nload_product_GgN,
-    Y_t_original_GgN = Nload_GgN
-  )
-
-diff_pairs <- future_diff %>%
-  dplyr::inner_join(
-    base_2010_diff,
-    by = "rivnum"
-  ) %>%
-  dplyr::mutate(
-    river_basin_name = dplyr::coalesce(
-      river_basin_name,
-      river_basin_name_0
+    factor_vars <- c(
+      "POP",
+      "Area_POP_ha_per_person",
+      "Ninput_Area_GgN_per_ha",
+      "Nleach_Ninput",
+      "Nload_Nleach",
+      "Nload_reconstructed_GgN",
+      "Nload_GgN"
     )
-  )
 
-  # =========================================================
-# First-order differential decomposition
-# evaluated at the 2010 values
-# =========================================================
-
-df_diff_decomp_summary <- diff_pairs %>%
-  dplyr::mutate(
-    dP = P_t - P_0,
-    dA = A_t - A_0,
-    dI = I_t - I_0,
-    dL = L_t - L_0,
-    dR = R_t - R_0,
-
-    # -------------------------------------------------------
-    # First-order effects
-    # ∂Y/∂P at base year × ΔP, etc.
-    # -------------------------------------------------------
-
-    contrib_POP_GgN =
-      A_0 * I_0 * L_0 * R_0 * dP,
-
-    contrib_Area_POP_GgN =
-      P_0 * I_0 * L_0 * R_0 * dA,
-
-    contrib_Ninput_Area_GgN =
-      P_0 * A_0 * L_0 * R_0 * dI,
-
-    contrib_Nleach_Ninput_GgN =
-      P_0 * A_0 * I_0 * R_0 * dL,
-
-    contrib_Nload_Nleach_GgN =
-      P_0 * A_0 * I_0 * L_0 * dR,
-
-    delta_Nload_product_GgN =
-      Y_t_product_GgN - Y_0_product_GgN,
-
-    delta_Nload_original_GgN =
-      Y_t_original_GgN - Y_0_original_GgN,
-
-    sum_first_order_GgN =
-      contrib_POP_GgN +
-      contrib_Area_POP_GgN +
-      contrib_Ninput_Area_GgN +
-      contrib_Nleach_Ninput_GgN +
-      contrib_Nload_Nleach_GgN,
-
-    interaction_residual_GgN =
-      delta_Nload_product_GgN -
-      sum_first_order_GgN,
-
-    interaction_residual_percent =
-      dplyr::if_else(
-        abs(delta_Nload_product_GgN) > 0,
-        100 *
-          interaction_residual_GgN /
-          delta_Nload_product_GgN,
-        NA_real_
-      ),
-
-    closure_error_GgN =
-      delta_Nload_product_GgN -
-      (
-        sum_first_order_GgN +
-        interaction_residual_GgN
+    df_factor_for_lmdi <- df_factor_identity_all %>%
+      dplyr::mutate(
+        dplyr::across(
+          dplyr::all_of(factor_vars),
+          replace_nonpositive_by_epsilon
+        )
       )
-  ) %>%
-  dplyr::select(
-    scenario_case,
-    year,
-    rivnum,
-    river_basin_name,
 
-    Y_0_product_GgN,
-    Y_t_product_GgN,
-    Y_0_original_GgN,
-    Y_t_original_GgN,
-
-    delta_Nload_product_GgN,
-    delta_Nload_original_GgN,
-
-    contrib_POP_GgN,
-    contrib_Area_POP_GgN,
-    contrib_Ninput_Area_GgN,
-    contrib_Nleach_Ninput_GgN,
-    contrib_Nload_Nleach_GgN,
-
-    sum_first_order_GgN,
-    interaction_residual_GgN,
-    interaction_residual_percent,
-    closure_error_GgN,
-
-    P_0, P_t,
-    A_0, A_t,
-    I_0, I_t,
-    L_0, L_t,
-    R_0, R_t
-  )
-
-  # =========================================================
-# Long format
-# =========================================================
-
-df_diff_decomp_long <- df_diff_decomp_summary %>%
-  dplyr::select(
-    scenario_case,
-    year,
-    rivnum,
-    river_basin_name,
-    delta_Nload_product_GgN,
-
-    contrib_POP_GgN,
-    contrib_Area_POP_GgN,
-    contrib_Ninput_Area_GgN,
-    contrib_Nleach_Ninput_GgN,
-    contrib_Nload_Nleach_GgN,
-    interaction_residual_GgN
-  ) %>%
-  tidyr::pivot_longer(
-    cols = c(
-      contrib_POP_GgN,
-      contrib_Area_POP_GgN,
-      contrib_Ninput_Area_GgN,
-      contrib_Nleach_Ninput_GgN,
-      contrib_Nload_Nleach_GgN,
-      interaction_residual_GgN
-    ),
-    names_to = "driver",
-    values_to = "contribution_GgN"
-  ) %>%
-  dplyr::mutate(
-    driver = dplyr::recode(
-      driver,
-      "contrib_POP_GgN" = "POP",
-      "contrib_Area_POP_GgN" = "Area/POP",
-      "contrib_Ninput_Area_GgN" = "Ninput/Area",
-      "contrib_Nleach_Ninput_GgN" = "Nleach/Ninput",
-      "contrib_Nload_Nleach_GgN" = "Nload/Nleach",
-      "interaction_residual_GgN" = "Interaction"
-    ),
-
-    driver = factor(
-      driver,
-      levels = c(
-        "POP",
-        "Area/POP",
-        "Ninput/Area",
-        "Nleach/Ninput",
-        "Nload/Nleach",
-        "Interaction"
+    # 2010年基準値
+    # 500C についても BaU 2010 を基準にする
+    base_2010 <- df_factor_for_lmdi %>%
+      dplyr::filter(scenario_case == "BaU", year == 2010) %>%
+      dplyr::select(
+        rivnum,
+        river_basin_name_base = river_basin_name,
+        POP_0 = POP,
+        Area_POP_0 = Area_POP_ha_per_person,
+        Ninput_Area_0 = Ninput_Area_GgN_per_ha,
+        Nleach_Ninput_0 = Nleach_Ninput,
+        Nload_Nleach_0 = Nload_Nleach,
+        Nload_0_GgN = Nload_reconstructed_GgN,
+        Nload_original_0_GgN = Nload_GgN
       )
-    )
-  )
 
-  # =========================================================
-# Simplified river names
+    future_values <- df_factor_for_lmdi %>%
+      dplyr::filter(
+        year != 2010,
+        scenario_case %in% c("BaU", "500C")
+      ) %>%
+      dplyr::select(
+        scenario_case,
+        year,
+        rivnum,
+        river_basin_name,
+        POP_t = POP,
+        Area_POP_t = Area_POP_ha_per_person,
+        Ninput_Area_t = Ninput_Area_GgN_per_ha,
+        Nleach_Ninput_t = Nleach_Ninput,
+        Nload_Nleach_t = Nload_Nleach,
+        Nload_t_GgN = Nload_reconstructed_GgN,
+        Nload_original_t_GgN = Nload_GgN
+      )
+
+    lmdi_pairs <- future_values %>%
+      dplyr::inner_join(base_2010, by = "rivnum") %>%
+      dplyr::mutate(
+        river_basin_name = dplyr::coalesce(river_basin_name, river_basin_name_base)
+      )
+
+      # =========================================================
+    # 5. Additive LMDI decomposition
+    # =========================================================
+
+    df_lmdi_decomp_summary <- lmdi_pairs %>%
+      dplyr::mutate(
+        L_weight = log_mean(Nload_t_GgN, Nload_0_GgN),
+
+        contrib_POP_GgN =
+          L_weight * log(POP_t / POP_0),
+
+        contrib_Area_POP_GgN =
+          L_weight * log(Area_POP_t / Area_POP_0),
+
+        contrib_Ninput_Area_GgN =
+          L_weight * log(Ninput_Area_t / Ninput_Area_0),
+
+        contrib_Nleach_Ninput_GgN =
+          L_weight * log(Nleach_Ninput_t / Nleach_Ninput_0),
+
+        contrib_Nload_Nleach_GgN =
+          L_weight * log(Nload_Nleach_t / Nload_Nleach_0),
+
+        delta_Nload_reconstructed_GgN =
+          Nload_t_GgN - Nload_0_GgN,
+
+        delta_Nload_original_GgN =
+          Nload_original_t_GgN - Nload_original_0_GgN,
+
+        sum_contribution_GgN =
+          contrib_POP_GgN +
+          contrib_Area_POP_GgN +
+          contrib_Ninput_Area_GgN +
+          contrib_Nleach_Ninput_GgN +
+          contrib_Nload_Nleach_GgN,
+
+        residual_GgN =
+          delta_Nload_reconstructed_GgN - sum_contribution_GgN
+      ) %>%
+      dplyr::select(
+        scenario_case,
+        year,
+        rivnum,
+        river_basin_name,
+
+        Nload_0_GgN,
+        Nload_t_GgN,
+        delta_Nload_reconstructed_GgN,
+        delta_Nload_original_GgN,
+
+        contrib_POP_GgN,
+        contrib_Area_POP_GgN,
+        contrib_Ninput_Area_GgN,
+        contrib_Nleach_Ninput_GgN,
+        contrib_Nload_Nleach_GgN,
+
+        sum_contribution_GgN,
+        residual_GgN,
+
+        POP_0,
+        POP_t,
+        Area_POP_0,
+        Area_POP_t,
+        Ninput_Area_0,
+        Ninput_Area_t,
+        Nleach_Ninput_0,
+        Nleach_Ninput_t,
+        Nload_Nleach_0,
+        Nload_Nleach_t
+      )
+
+    df_lmdi_decomp_summary %>%
+      dplyr::group_by(scenario_case, year) %>%
+      dplyr::summarise(
+        n = dplyr::n(),
+        mean_abs_residual_GgN = mean(abs(residual_GgN), na.rm = TRUE),
+        max_abs_residual_GgN = max(abs(residual_GgN), na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      print(n = Inf)
+
+      # =========================================================
+    # 6. Long format for plotting
+    # =========================================================
+
+    df_lmdi_decomp_long <- df_lmdi_decomp_summary %>%
+      dplyr::select(
+        scenario_case,
+        year,
+        rivnum,
+        river_basin_name,
+        delta_Nload_reconstructed_GgN,
+        dplyr::starts_with("contrib_")
+      ) %>%
+      tidyr::pivot_longer(
+        cols = dplyr::starts_with("contrib_"),
+        names_to = "driver",
+        values_to = "contribution_GgN"
+      ) %>%
+      dplyr::mutate(
+        driver = dplyr::recode(
+          driver,
+          "contrib_POP_GgN" = "POP",
+          "contrib_Area_POP_GgN" = "Area/POP",
+          "contrib_Ninput_Area_GgN" = "Ninput/Area",
+          "contrib_Nleach_Ninput_GgN" = "Nleach/Ninput",
+          "contrib_Nload_Nleach_GgN" = "Nload/Nleach"
+        ),
+        driver = factor(
+          driver,
+          levels = c(
+            "POP",
+            "Area/POP",
+            "Ninput/Area",
+            "Nleach/Ninput",
+            "Nload/Nleach"
+          )
+        )
+      )
+
+     # =========================================================
+# 7. Plot function
+#    Top 14 basins selected by absolute Nload in 2010
 # =========================================================
 
 clean_river_name <- function(x) {
@@ -2169,23 +1520,20 @@ clean_river_name <- function(x) {
     stringr::str_replace_all("_", " ")
 }
 
-# =========================================================
-# Top 14 by absolute Nload in 2010
-# =========================================================
+# ---------------------------------------------------------
+# Select Top 14 basins by absolute Nload in 2010
+# Baseline/BaU 2010 is used as the common reference.
+# ---------------------------------------------------------
 
-top_rivers14_diff <- df_factor_for_diff %>%
+top_rivers14_lmdi <- df_factor_identity_all %>%
   dplyr::filter(
     scenario_case == "BaU",
     year == 2010
   ) %>%
-  dplyr::arrange(
-    dplyr::desc(abs(Nload_GgN))
-  ) %>%
+  dplyr::arrange(dplyr::desc(Nload_GgN)) %>%
   dplyr::slice_head(n = 14) %>%
   dplyr::mutate(
-    river_label = clean_river_name(
-      river_basin_name
-    )
+    river_label = clean_river_name(river_basin_name)
   ) %>%
   dplyr::select(
     rivnum,
@@ -2194,73 +1542,52 @@ top_rivers14_diff <- df_factor_for_diff %>%
     Nload_2010_GgN = Nload_GgN
   )
 
-print(top_rivers14_diff)
+print(top_rivers14_lmdi)
 
-# =========================================================
-# Plot differential decomposition
-# =========================================================
+# ---------------------------------------------------------
+# Plot LMDI decomposition
+# ---------------------------------------------------------
 
-plot_differential_decomposition_top14 <- function(
-    scenario_name,
-    out_dir = "output"
-) {
+plot_lmdi_decomposition_top14 <- function(scenario_name,
+                                          out_dir = "output") {
 
-  dir.create(
-    out_dir,
-    showWarnings = FALSE,
-    recursive = TRUE
-  )
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
-  basin_levels <- top_rivers14_diff %>%
-    dplyr::arrange(
-      dplyr::desc(Nload_2010_GgN)
-    ) %>%
+  summary_s <- df_lmdi_decomp_summary %>%
+    dplyr::filter(scenario_case == scenario_name)
+
+  long_s <- df_lmdi_decomp_long %>%
+    dplyr::filter(scenario_case == scenario_name)
+
+  if (nrow(summary_s) == 0) {
+    warning("No data for scenario: ", scenario_name)
+    return(NULL)
+  }
+
+  basin_levels <- top_rivers14_lmdi %>%
+    dplyr::arrange(dplyr::desc(Nload_2010_GgN)) %>%
     dplyr::pull(river_label)
 
-  plot_long <- df_diff_decomp_long %>%
-    dplyr::filter(
-      scenario_case == scenario_name
-    ) %>%
+  plot_long <- long_s %>%
     dplyr::inner_join(
-      top_rivers14_diff %>%
-        dplyr::select(
-          rivnum,
-          river_label
-        ),
+      top_rivers14_lmdi %>%
+        dplyr::select(rivnum, river_label),
       by = "rivnum"
     ) %>%
     dplyr::mutate(
-      river_label = factor(
-        river_label,
-        levels = rev(basin_levels)
-      ),
-      year_f = factor(
-        year,
-        levels = c(2030, 2050, 2100)
-      )
+      river_label = factor(river_label, levels = rev(basin_levels)),
+      year_f = factor(year, levels = c(2030, 2050, 2100))
     )
 
-  plot_total <- df_diff_decomp_summary %>%
-    dplyr::filter(
-      scenario_case == scenario_name
-    ) %>%
+  plot_total <- summary_s %>%
     dplyr::inner_join(
-      top_rivers14_diff %>%
-        dplyr::select(
-          rivnum,
-          river_label
-        ),
+      top_rivers14_lmdi %>%
+        dplyr::select(rivnum, river_label),
       by = "rivnum"
     ) %>%
     dplyr::mutate(
-      river_label = factor(
-        river_label,
-        levels = rev(basin_levels)
-      ),
-      year_f = factor(
-        year,
-        levels = c(2030, 2050, 2100)
-      )
+      river_label = factor(river_label, levels = rev(basin_levels)),
+      year_f = factor(year, levels = c(2030, 2050, 2100))
     )
 
   p <- ggplot2::ggplot(
@@ -2272,94 +1599,37 @@ plot_differential_decomposition_top14 <- function(
     )
   ) +
     ggplot2::geom_col() +
-
     ggplot2::geom_point(
       data = plot_total,
       ggplot2::aes(
         x = river_label,
-        y = delta_Nload_product_GgN
+        y = delta_Nload_reconstructed_GgN
       ),
       inherit.aes = FALSE,
-      size = 2.7
+      size = 1.8
     ) +
-
-    ggplot2::geom_hline(
-      yintercept = 0
-    ) +
-
+    ggplot2::geom_hline(yintercept = 0) +
     ggplot2::coord_flip() +
-
     ggplot2::facet_wrap(
       ~ year_f,
-      ncol = 3
+      ncol = 3,
+      scales = "free_y"
     ) +
-
-    ggplot2::scale_fill_manual(
-      values = c(
-        "POP" = "#F8766D",
-        "Area/POP" = "#A3A500",
-        "Ninput/Area" = "#00BF7D",
-        "Nleach/Ninput" = "#00B0F6",
-        "Nload/Nleach" = "#E76BF3",
-        "Interaction" = "grey50"
-      )
-    ) +
-
-    ggplot2::theme_bw(
-      base_size = 18
-    ) +
-
+    ggplot2::theme_bw(base_size = 12) +
     ggplot2::theme(
-      panel.grid.major =
-        ggplot2::element_blank(),
-
-      panel.grid.minor =
-        ggplot2::element_blank(),
-
-      panel.border =
-        ggplot2::element_blank(),
-
-      axis.line =
-        ggplot2::element_line(
-          colour = "black"
-        ),
-
-      legend.position = "bottom",
-
-      strip.background =
-        ggplot2::element_rect(
-          fill = "grey90",
-          colour = NA
-        ),
-
-      strip.text =
-        ggplot2::element_text(
-          face = "bold"
-        )
+      panel.grid.major = ggplot2::element_blank(),
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.border     = ggplot2::element_blank(),
+      axis.line        = ggplot2::element_line(colour = "black"),
+      legend.position  = "bottom",
+      strip.background = ggplot2::element_rect(fill = "grey90", colour = NA),
+      strip.text       = ggplot2::element_text(face = "bold")
     ) +
-
     ggplot2::labs(
-      title = paste0(
-        "Differential decomposition of river N load change from 2010: ",
-        scenario_name
-      ),
-
-      subtitle = paste0(
-        "First-order effects evaluated at 2010. ",
-        "Grey bars indicate interaction and higher-order effects."
-      ),
-
+      title = paste0("Decomposition of river N load change from 2010: ", scenario_name),
+      subtitle = "Top 14 basins selected by absolute N load in 2010. Points indicate total ΔNload.",
       x = "River basin",
-
-      y = expression(
-        paste(
-          "Contribution to ",
-          Delta,
-          "N load [Gg N yr"^{-1},
-          "]"
-        )
-      ),
-
+      y = expression(paste("Contribution to ", Delta, "N load [Gg N yr"^{-1}, "]")),
       fill = "Factor"
     )
 
@@ -2368,15 +1638,11 @@ plot_differential_decomposition_top14 <- function(
   ggplot2::ggsave(
     filename = file.path(
       out_dir,
-      paste0(
-        "Differential_Nload_decomposition_",
-        scenario_name,
-        "_top14.png"
-      )
+      paste0("LMDI_Nload_decomposition_", scenario_name, "_top14_absNload2010.png")
     ),
     plot = p,
-    width = 16,
-    height = 10,
+    width = 12,
+    height = 8,
     dpi = 300,
     bg = "white"
   )
@@ -2385,70 +1651,43 @@ plot_differential_decomposition_top14 <- function(
 }
 
 # =========================================================
-# Save results
+# 8. Draw plots
 # =========================================================
 
-dir.create(
-  "Data_pd",
-  showWarnings = FALSE,
-  recursive = TRUE
-)
-
-safe_save_rdata(
-  object_names = c(
-    "df_diff_decomp_summary",
-    "df_diff_decomp_long"
-  ),
-  envir = environment(),
-  file =
-    "Data_pd/df_Nload_differential_decomposition.rdat"
-)
-
-timestamp <- format(
-  Sys.time(),
-  "%Y%m%d_%H%M%S"
-)
-
-dir.create(
-  "output/Differential_csv",
-  showWarnings = FALSE,
-  recursive = TRUE
-)
-
-readr::write_csv(
-  df_diff_decomp_summary,
-  file.path(
-    "output/Differential_csv",
-    paste0(
-      "Nload_differential_decomposition_summary_",
-      timestamp,
-      ".csv"
-    )
-  )
-)
-
-readr::write_csv(
-  df_diff_decomp_long,
-  file.path(
-    "output/Differential_csv",
-    paste0(
-      "Nload_differential_decomposition_long_",
-      timestamp,
-      ".csv"
-    )
-  )
-)
-
-# =========================================================
-# Draw and save figures
-# =========================================================
-
-p_diff_BaU <- plot_differential_decomposition_top14(
+p_lmdi_BaU <- plot_lmdi_decomposition_top14(
   scenario_name = "BaU",
   out_dir = "output"
 )
 
-p_diff_500C <- plot_differential_decomposition_top14(
+p_lmdi_500C <- plot_lmdi_decomposition_top14(
   scenario_name = "500C",
   out_dir = "output"
 )
+
+    # =========================================================
+    # 9. Save decomposition results
+    # =========================================================
+
+    dir.create("Data_pd", showWarnings = FALSE, recursive = TRUE)
+
+    save(
+      df_factor_identity_all,
+      df_lmdi_decomp_summary,
+      df_lmdi_decomp_long,
+      file = "Data_pd/df_Nload_factor_decomposition_LMDI.rdat"
+    )
+
+    readr::write_csv(
+      df_factor_identity_all,
+      "Data_pd/df_Nload_factor_identity_all.csv"
+    )
+
+    readr::write_csv(
+      df_lmdi_decomp_summary,
+      "Data_pd/df_Nload_factor_decomposition_LMDI_summary.csv"
+    )
+
+    readr::write_csv(
+      df_lmdi_decomp_long,
+      "Data_pd/df_Nload_factor_decomposition_LMDI_long.csv"
+    )
