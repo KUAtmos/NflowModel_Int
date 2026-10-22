@@ -86,5 +86,6 @@ upstream model convergence and GMD numerical equivalence were not tested here.
 README.docx is rebuilt from README.md with tools/build_readme.py. Its pages are
 visually checked using Word PDF export and bundled Poppler; the packaged
 LibreOffice renderer is unavailable on this Windows host. QA intermediates are
-not published. The manual now focuses on GMD inputs, installation settings,
-execution order, outputs, fixed routing parameters and reproducibility limits.
+not published. The manual focuses on GMD setup, required input data, shell
+execution and the main output files. Detailed data checks, calibration and
+reproducibility-limit discussions, and footer text are omitted from the manual.

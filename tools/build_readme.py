@@ -49,14 +49,6 @@ def build(output=None):
     doc.styles["Heading 1"].font.size = Pt(14)
     doc.styles["Heading 1"].paragraph_format.space_before = Pt(14)
     doc.styles["Heading 1"].paragraph_format.space_after = Pt(7)
-    footer = sec.footer.paragraphs[0]
-    footer.alignment = 2
-    footer.add_run("NflowModel and VISIToRN   |   ")
-    field = OxmlElement("w:fldSimple")
-    field.set(qn("w:instr"), "PAGE")
-    footer._p.append(field)
-    for run in footer.runs:
-        run.font.size = Pt(8)
     lines = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
     index = 0
     while index < len(lines):
@@ -126,6 +118,8 @@ def build(output=None):
                     p = cell.paragraphs[0]
                     p.paragraph_format.space_after = Pt(4)
                     p.paragraph_format.space_before = Pt(3)
+                    if row_index == 0:
+                        p.paragraph_format.keep_with_next = True
                     runs(p, text, table=True)
                     for run in p.runs:
                         if run.font.size is None:
@@ -146,9 +140,9 @@ def build(output=None):
             if not bullet and text.rstrip().endswith(":"):
                 p.paragraph_format.keep_with_next = True
         index += 1
-    doc.core_properties.title = "Reproducing the GMD nitrogen flow study"
+    doc.core_properties.title = "How to use the nitrogen flow model"
     doc.core_properties.author = "Yuto Osugi"
-    doc.core_properties.subject = "Inputs, execution and verification for the GMD study"
+    doc.core_properties.subject = "Setup, input data, execution and outputs for the GMD study"
     doc.save(output or ROOT / "README.docx")
 
 
