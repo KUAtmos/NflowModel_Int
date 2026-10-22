@@ -226,4 +226,3 @@ python3 scenario_workflow/prepare_workspace.py --target /path/to/new_run --verif
 
 The first command needs Rscript on PATH and the relevant R dependencies.
 The second checks a prepared input snapshot; it does not calculate the model.
-See [RELEASE_NOTES.md](../RELEASE_NOTES.md) for the checks actually performed.
