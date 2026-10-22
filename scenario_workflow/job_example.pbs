@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Edit queue/resource names for your scheduler before submission.
+#PBS -N nflow_scenarios
+#PBS -l select=1:ncpus=1:mem=32gb
+#PBS -l walltime=48:00:00
+#PBS -j oe
+set -euo pipefail
+: "${WORKSPACE:?Pass an absolute prepared workspace path with qsub -v}"
+: "${STAGE:?Pass preflight, calculate, plot, natural, route, or compare}"
+: "${GAMS_DIR:?Pass the installed GAMS directory with qsub -v}"
+export GAMS_DIR
+bash "$WORKSPACE/run_stage.sh" "$STAGE"
