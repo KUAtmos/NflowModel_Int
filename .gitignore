@@ -43,3 +43,12 @@ NflowModel/Shell/psubjob_gmd_manure_only.sh
 NflowModel/Shell/run_gmd_manure_only.sh
 NflowModel/Shell/psubjob_nflow_replot_only.sh
 NflowModel/Shell/run_nflow_replot_only.sh
+
+# Independent multi-scenario run workspaces and generated products
+scenario_workflow/NflowModel/data/
+scenario_workflow/NflowModel/output/
+scenario_workflow/VISIToRN/Data_pd/
+scenario_workflow/VISIToRN/output/
+scenario_workflow/VISIToRN/visit_*.nc
+scenario_workflow/logs/
+__pycache__/

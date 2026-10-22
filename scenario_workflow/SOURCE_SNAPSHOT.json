@@ -1,0 +1,104 @@
+{
+  "snapshot_date": "2026-10-22",
+  "source": "NflowModel_Int_0 working source snapshot",
+  "gmd_baseline_commit": "bc4bc551de43fd016c2393e843160819c2885e8c",
+  "note": "Source hashes precede the documented packaging-only changes. Scientific equations are retained.",
+  "files": [
+    {
+      "path": "NflowModel/R/grid_emissions_csv.R",
+      "source_sha256": "e22754bd876ebcf994e22599a0da8c18c9c4c50fadf985e384e2d4720cd801bc"
+    },
+    {
+      "path": "NflowModel/R/input_data_config.R",
+      "source_sha256": "c372e715227556bf1a8db51357fc63ea4b9aca6ec71a6ac8f4973c6d00c6ef30"
+    },
+    {
+      "path": "NflowModel/R/manure_future_helpers.R",
+      "source_sha256": "2204800215ca4274d50d3e8229e02686f5b2d14448409cf4d33582e638dae514"
+    },
+    {
+      "path": "NflowModel/R/RawDataProcess.R",
+      "source_sha256": "4b03c6428fab47e3634124d60f82c27a07429e499e43c2f97b2e824200a788b4"
+    },
+    {
+      "path": "NflowModel/R/test_manure_future_helpers.R",
+      "source_sha256": "370de0c4b19d8c2352e1ec2eeefca853d3474813dfc61bd3f242387b66a9844a"
+    },
+    {
+      "path": "NflowModel/scenario/data/nue_targets.csv",
+      "source_sha256": "337b1a643312293d9bdb0fcbff1ea343bc795015d6303d2044227f042f15544c"
+    },
+    {
+      "path": "NflowModel/scenario/export_grid_emissions.R",
+      "source_sha256": "c5f82efb1c01367c992dcb290882aaac416aa03c8c5873045810ae7f0d2c049d"
+    },
+    {
+      "path": "NflowModel/scenario/plot_nflow_scenarios.R",
+      "source_sha256": "f1bd26c11b199a0259b610801a1773f475e1c06b45641464c32b93b8f6e1ebb3"
+    },
+    {
+      "path": "NflowModel/scenario/R/config.R",
+      "source_sha256": "abd4620b26d5660c71267ce05ad7ca88031f95db17a1ab24eb3e5a72063ad87e"
+    },
+    {
+      "path": "NflowModel/scenario/R/scenario_extensions.R",
+      "source_sha256": "e77cb4b3dc202711ee1c76dd06cc2d12a5e115300f0670fd1a023d2e28d4f4e6"
+    },
+    {
+      "path": "NflowModel/scenario/R/scenario_registry.R",
+      "source_sha256": "89b47271694beb875d7e6ea102e4c185b555398ca7f1497c235aee631702c654"
+    },
+    {
+      "path": "NflowModel/scenario/run_nflow_plots.R",
+      "source_sha256": "312240488599b551cc680562bf4b8a156b8c34e9be24cf19e74ec72b8fd4dd1e"
+    },
+    {
+      "path": "NflowModel/scenario/run_nflow_scenarios.R",
+      "source_sha256": "be5e6ad30f1082dabb385a290c53c5d201baa0cf188238b88d1d2bacf8953a8b"
+    },
+    {
+      "path": "NflowModel/scenario/tests/test_gas_context.R",
+      "source_sha256": "f9d859b465b63213ce63179ad1a1664762af394be7bb01f4a43febb6f8cc1a7e"
+    },
+    {
+      "path": "NflowModel/scenario/tests/test_grid_emissions_csv.R",
+      "source_sha256": "e119a484076e2fda464099a540dd298b77905477c442f154749719b3d9644ff7"
+    },
+    {
+      "path": "NflowModel/scenario/tests/test_plot_nflow_scenarios.R",
+      "source_sha256": "2ed08106105d7e54380c5137464f151103b2b8fca3507be521c4871639cb1028"
+    },
+    {
+      "path": "NflowModel/scenario/tests/test_scenario_extensions.R",
+      "source_sha256": "5fdd40fb716bb6b9be098be8c5da7065cf5f528231e6f8de08c234471f226338"
+    },
+    {
+      "path": "NflowModel/scenario/tests/validate_input_schemas.R",
+      "source_sha256": "e54b4708c04d5689d17c9bc995bc1be4f957752df9b1bcdeee3b830b6103a000"
+    },
+    {
+      "path": "VISIToRN/safe_save_rdata.R",
+      "source_sha256": "cfd6b2ecd5418becd0ac688348b41b39626c49f983ae942d2dcae9a66ae9eac4"
+    },
+    {
+      "path": "VISIToRN/scenario/prepare_natural_inputs.R",
+      "source_sha256": "3af481eb6bfabb71b08e78a69af7be928aac4078707a48563a699d3c53220f26"
+    },
+    {
+      "path": "VISIToRN/scenario/R/visitorn_scenario_functions.R",
+      "source_sha256": "58012f2420891437c31c6fa70b778b1b09ec1ed0b828a2dce0d2c6df5a4ecbba"
+    },
+    {
+      "path": "VISIToRN/scenario/run_visitorn_scenarios.R",
+      "source_sha256": "bde7c136b427912cb17283779260142ae1fcd375a634f3afb520dd59b826f41d"
+    },
+    {
+      "path": "VISIToRN/scenario/tests/test_visitorn_scenario_pipeline.R",
+      "source_sha256": "88e7d80bea968cb2b1212a18733331bde6fac4e99ed039121fd841377cebf9c3"
+    },
+    {
+      "path": "VISIToRN/VISIToRN_func.R",
+      "source_sha256": "8d9a81884013654589cb411dc3889b2564cdc31b2f3998a7dd1600b3fc93a5cb"
+    }
+  ]
+}
