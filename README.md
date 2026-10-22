@@ -1,288 +1,274 @@
-# NflowModel and VISIToRN user guide
+# Reproducing the GMD nitrogen flow study
 
 Yuto Osugi | Updated 22 October 2026
 
-This repository contains the agricultural nitrogen-flow model and its connection
-to the existing VISIT vegetation model and VISIToRN river-routing module.
-It now provides two **separate workflows**. Use the preserved root workflow for
-the GMD paper; use the additional workflow for multi-scenario experiments.
-The Word manual, [README.docx](README.docx), covers the same operating procedures.
+This guide describes how to run the agricultural nitrogen-flow model and the
+linked riverine nitrogen-load calculations used in the GMD study. The framework
+uses socioeconomic and agricultural inputs from AIM-Hub, spatial land-use and
+livestock inputs from AIM-PLUM, atmospheric deposition from GEOS-Chem, and
+leaching and hydrological inputs from the existing VISIT vegetation model.
+VISIToRN routes nitrogen through river networks.
 
-## 1 Choose the workflow
+The instructions cover the retained programs in the root `NflowModel/` and
+`VISIToRN/` directories: input preparation, nitrogen-flow calculations,
+river routing, evaluation against observations, and factor decomposition.
+They start from processed upstream-model outputs; they do not run AIM-Hub,
+AIM-PLUM, GEOS-Chem or VISIT. A repository clone alone is not sufficient for a
+complete rerun because some required inputs are distributed separately.
 
-| Purpose | Code and configuration | Input family |
+## 1 Study settings and directory structure
+
+Use the original study inputs for the two scenarios below. Do not substitute a
+newer policy pathway or add a trailing `_No` to either scenario name.
+
+| Study scenario | Input scenario identifier | Main analysis years |
 | --- | --- | --- |
-| Reproduce the GMD study | Root `NflowModel/` and `VISIToRN/`; `run_gmd.sh` | Historical Baseline and 500C, without the trailing `_No` |
-| Additional eight-case factorial analysis | `scenario_workflow/`; `eight_cases.env` | Four agricultural `_No` cases, each with NUE off/on |
-| Additional ten-case analysis | Same code; `scenario_config.env` | Eight cases plus AP and NUE + AP |
+| Baseline or BaU | `SSP2_BaU_NoCC` | 2010, 2030, 2050, 2100 |
+| 500C | `SSP2_500C_CACN_NoCC` | 2030, 2050, 2100 |
 
-The root scientific programs and tracked input files are retained unchanged from
-commit `bc4bc551de43fd016c2393e843160819c2885e8c`. New analysis code is an
-isolated snapshot of the working NflowModel_Int_0 implementation; it does not
-replace the GMD model. Provenance and packaging changes are described in
-[RELEASE_NOTES.md](RELEASE_NOTES.md) and
-[`scenario_workflow/SOURCE_SNAPSHOT.json`](scenario_workflow/SOURCE_SNAPSHOT.json).
+Both scenarios share Baseline 2010 as the reference. The agricultural driver
+also calculates Baseline 2020 for the ammonia-emission comparison; this year is
+not part of the seven-case main result table. Supply 2020 inputs as well.
 
-The new runner's `SCENARIO_GMD_INPUTS=on` selects historical **input names**, not
-the historical scientific implementation. It is not a substitute for the root
-workflow when reproducing the paper. Never mix results from the two workflows.
+- `NflowModel/R/`: agricultural nitrogen calculations, figures, river-input
+  preparation and decomposition scripts.
+- `NflowModel/data/`: agricultural inputs and some generated tables.
+- `NflowModel/output/`: agricultural result tables, figures and diagnostics.
+- `VISIToRN/`: river-routing programs, basin definitions, observations and
+  external VISIT/PLUM files.
+- `VISIToRN/Data_pd/`: routing inputs, generated arrays and decomposition tables.
+- `VISIToRN/output/`: river-load figures and concentration results.
 
-## 2 System preparation
+Use a dedicated working copy. Several scripts overwrite generated files in
+`data/` and `Data_pd/`, including files already tracked in the repository.
+Keep an untouched copy of the study data and record the Git commit used.
 
-Use R with GAMS and its `gdxrrw` interface. The multi-scenario workflow also
-requires Python 3 for input staging/checksums and a C++ toolchain for VISIToRN
-(`inline` and `RcppArmadillo`). Python does not perform the scientific model
-calculations. Linux/Bash is recommended for the launchers and PBS example.
-On Windows, use the R/Python entry points directly; use an ASCII-only workspace
-path if R or GAMS cannot handle non-ASCII command-line paths.
+## 2 Required software
 
-R dependencies used by the additional workflow include `dplyr`, `tidyr`,
-`ggplot2`, `gdxrrw`, `ncdf4`, `readr`, `Amelia`, `stringr`, `purrr`,
-`terra`, `scales`, `maps`, `inline`, and `RcppArmadillo`. GMD plotting
-additionally uses packages declared in the retained scripts, including `sf`,
-`rnaturalearth`, `rnaturalearthdata`, `ggrepel`, and `forcats`.
-Headless plotting needs an R build with Cairo support.
+Install R, GAMS with a compatible `gdxrrw` R interface, and a C++ compiler
+compatible with R. VISIToRN compiles its routing function through `inline` and
+`RcppArmadillo`. On Windows, use the R-compatible Rtools toolchain. On Linux,
+the spatial and NetCDF R packages may also require system development libraries.
+The GMD calculation does not require Python.
 
-Set `GAMS_DIR` to your installed GAMS directory. Install and test the matching
-`gdxrrw` interface separately. This release does not install software, provide a
-GAMS license, or change calibration parameters.
+The scripts use these R packages:
+
+```r
+install.packages(c(
+  "dplyr", "tidyr", "tibble", "purrr", "readr", "stringr",
+  "ggplot2", "scales", "patchwork", "cowplot", "ggrepel",
+  "forcats", "ncdf4", "terra", "sf", "rnaturalearth",
+  "rnaturalearthdata", "Amelia", "maps", "inline",
+  "Rcpp", "RcppArmadillo"
+))
+```
+
+Install `gdxrrw` separately for the GAMS installation in use. The optional MCMC
+diagnostic script also requires `coda` and Cairo graphics support.
+Record R and package versions with `sessionInfo()`; no complete locked
+software environment for the original study is supplied.
+
+Set the GAMS path before launching R:
 
 ```bash
 export GAMS_DIR=/path/to/gams
 Rscript -e 'gdxrrw::igdx(Sys.getenv("GAMS_DIR"))'
 ```
 
-Run model calculations and large input checks in a compute-node allocation,
-not on an HPC login node. `job_example.pbs` is a resource template, not a runtime
-or memory guarantee. Space and time scale with scenarios, years and saved grids.
-This update has not benchmarked a full global run.
+**Check the second GAMS path setting too.** The retained
+`NflowModel/R/VISIToRN_input.r` sets its own `gams_dir` near the beginning:
+`C:/GAMS/53` on Windows, or `~/gams39.3_linux_x64_64_sfx` on Linux.
+If necessary, change only this installation path in the working copy.
+Setting `GAMS_DIR` alone does not override that setting.
 
-## 3 Data preparation and the GMD workflow
+Use a compute-node allocation for global calculations on an HPC system.
+The routing arrays require substantial memory; no full-run runtime or memory
+benchmark is provided here. Use a short, ASCII-only working path if R or GAMS
+has trouble with spaces or non-ASCII characters.
 
-A clone is not a complete scientific input archive. Obtain the matching external
-inputs from their data providers; do not substitute newer inputs into a paper
-reproduction run. The original manual required these additional GMD files:
+## 3 Assemble the study inputs
 
-| Directory | External files |
+Retain the supplied auxiliary files in their original locations. The following
+processed files are external requirements, not files generated by the launcher.
+
+Place these four files in `NflowModel/data/`:
+
+- `livdis_SSP2_BaU_NoCC.nc`
+- `livdis_SSP2_500C_CACN_NoCC.nc`
+- `results_SSP2_BaU_NoCC.gdx`
+- `results_SSP2_500C_CACN_NoCC.gdx`
+
+Place the same two `results_*.gdx` files in `VISIToRN/`, together with:
+
+- `visit_20260311_atmosclus_NMIP3_TEST_fNleach_natonly.nc`
+- `visit_20260311_atmosclus_NMIP3_TEST_fNleach_agronly.nc`
+
+Obtain the exact processed study files from the study authors or the relevant
+data providers, subject to their access and redistribution conditions.
+Public source datasets alone are not a substitute for the model-specific GDX,
+NetCDF and R-array products. No automatic download procedure for these external
+files is provided.
+
+The supplied inputs serve the following roles:
+
+| Input group | Location and files |
 | --- | --- |
-| `NflowModel/data/` | `livdis_SSP2_BaU_NoCC.nc`, `livdis_SSP2_500C_CACN_NoCC.nc`, `results_SSP2_BaU_NoCC.gdx`, `results_SSP2_500C_CACN_NoCC.gdx` |
-| `VISIToRN/` | The same two PLUM `results_*.gdx` files; `visit_20260311_atmosclus_NMIP3_TEST_fNleach_natonly.nc` and `visit_20260311_atmosclus_NMIP3_TEST_fNleach_agronly.nc` |
+| AIM-Hub agricultural activity | `NflowModel/data/global_17_IAMC.gdx`, containing the two study scenario records |
+| Grid and regional mappings | `data_prep.gdx` in both model directories; the mapping files supplied with each directory |
+| Livestock body weights | `NflowModel/data/BW_map_BaU.csv` and `BW_map_500C.csv` |
+| Atmospheric deposition | `0505NDRYMON_*.nc` and `0505NWETMON_*.nc` in `NflowModel/data/` |
+| Agricultural statistics and soil data | The supplied FAOSTAT, IFA, FUBC and coefficient tables, `resampled_df.rdat`, and `0505PRECTOT_test.nc4` in `NflowModel/data/` |
+| Routing and population | Static arrays and population data in `VISIToRN/Data_pd/`; TRIP and basin files in `VISIToRN/` |
+| Evaluation data | CEDS ammonia data in `NflowModel/data/`, EDGAR data in `VISIToRN/Data_pd/`, and river observations in `VISIToRN/` |
 
-Keep the repository's existing auxiliary data and the archived AIM-Hub,
-deposition and livestock inputs together. The expected agricultural scenario
-names are `SSP2_BaU_NoCC` and `SSP2_500C_CACN_NoCC`.
-Preserve the valid historical 2010 reference.
+For deposition, the filename suffixes are `Base2010`, `Base2020`,
+`Base2030`, `Base2050`, `Base2100`, `500C2030`, `500C2050` and
+`500C2100`. Each requires both a dry and a wet deposition file.
 
-From a dedicated copy of the repository, with the GMD inputs installed:
+Before execution, check the data contents as well as filenames:
+
+- AIM-Hub must provide `IAMC_Template` records for the requested scenarios and
+  years. PLUM files must contain `VY_load` for river-input preparation; the
+  agricultural reader also accepts `VYL`, but the river-input reader does not.
+- Livestock files must contain `Livestock_number` with dimensions in the order
+  `lon, lat, slnum, time`, including the required years and the 2010 slice.
+- The VISIT files must match the supplied 720 by 360 grid and the reader's
+  `n_leach` layout. The retained implementation uses the 2010 monthly VISIT
+  slice and combines it with each scenario year's land use. Do not replace
+  this with future climate forcing when reproducing the study.
+- Keep the seven static routing arrays:
+  `LandMask_Loop.rdat`, `DistMat.rdat`, `VISITro_nat_ag.rdat`,
+  `RivArea.rdat`, `HumanN_future.rdat`, `dat_tas.rdat` and `dat_dir.rdat`.
+  Decomposition also uses `SSP_update.gdx` and `regionSSP.map`.
+- Keep `River_Nitrogen_Load_Data.csv` and `River_obs_analysis.txt` for the
+  observation comparison. Preserve the supplied basin IDs and name matching.
+
+## 4 Run the calculations and figures
+
+From the repository root, after preparing software and data:
 
 ```bash
 export GAMS_DIR=/path/to/gams
+unset VISITORN_CASES VISITORN_ARRAY_ONLY VISITORN_ARRAY_OUTPUT_DIR
 bash run_gmd.sh
 ```
 
-This runs `Make_Result_csv.r`, `Visualization_Nmodel.r`,
-`VISIToRN_input.r` and `Deco.R` from `NflowModel/R/`.
-The new launcher corrects the historical shell wrapper's spelling of
-`VISIToRN_input.r`; it does not modify model equations or the scientific scripts.
-The GMD workflow retains its existing output conventions and can overwrite
-generated files, so use a separate working copy.
+The launcher calls `tools/run_gmd.R`, which runs the following sequence in
+**one R session**. This is necessary because plotting and decomposition use
+objects created by earlier stages; launching each script as an independent
+`Rscript` process discards those objects.
 
-Main outputs are agricultural nitrogen-flow tables and figures in
-`NflowModel/output/`, and river nitrogen-load/concentration results and figures
-in `VISIToRN/output/`. Intermediate files also appear under `data/` and
-`Data_pd/`, as in the original implementation.
-
-## 4 Additional scenarios and their inputs
-
-The eight-case analysis combines three switches: climate mitigation (CM),
-dietary change and food-waste reduction (DFW), and nitrogen-use efficiency (NUE).
-The additional AP cases apply air-pollution-control deposition inputs.
-
-| Scenario ID | Figure label | Underlying agricultural input |
-| --- | --- | --- |
-| `baseline` | REF | `SSP2_BaU_NoCC_No` |
-| `500c` | CM | `SSP2_500C_CACN_NoCC_No` |
-| `demfwr` | DFW | `SSP2_BaU_DEMFWR_No` |
-| `nue` | NUE | REF inputs with NUE adjustment |
-| `500c_demfwr` | CM + DFW | `SSP2_500C_CACN_DEMFWR_No` |
-| `500c_nue` | CM + NUE | CM inputs with NUE adjustment |
-| `demfwr_nue` | DFW + NUE | DFW inputs with NUE adjustment |
-| `500c_demfwr_nue` | CM + DFW + NUE | CM + DFW inputs with NUE adjustment |
-| `air_pollution` | AP | REF agricultural inputs; APMTFR deposition |
-| `nue_air_pollution` | NUE + AP | Same AP inputs with NUE adjustment |
-
-The current registry uses **CACN**, not the newer **2020NDC** pathway. Do not
-relabel an input file to change policy meaning. A 2020NDC experiment requires
-consistent AIM-Hub, PLUM and GEOS-Chem products and explicit registry updates;
-it is not enabled by this publication update.
-
-NUE targets in `NflowModel/scenario/data/nue_targets.csv` are 0.60 (2020),
-0.65 (2030), 0.70 (2050) and 0.75 (2100), with linear interpolation.
-The adjustment determines the required nitrogen input from crop uptake and the
-target NUE, then accounts for manure, deposition and fixation to obtain
-synthetic fertilizer input. Check `INCLUDE_RESIDUE_IN_NUE` when interpreting
-uptake. The imported code retains signed leaching and the pasture gas-context
-correction; this packaging update does not add a new clipping rule.
-
-For each of the four agricultural cases provide matching AIM-Hub IAMC output,
-PLUM land use, livestock density and body weight, and wet/dry deposition.
-`input_data_config.R` is the authoritative filename resolver:
-
-- AIM-Hub: `global_17_IAMC.gdx`, containing all four scenario records.
-- PLUM: `result_<scenario>.gdx` or `results_<scenario>.gdx`;
-  livestock: `livdis_<scenario>.nc`.
-- Preferred body-weight files: `BW_map_BaU_No.csv`,
-  `BW_map_500C_No.csv`, `BW_map_BaU_EAT_No.csv`,
-  `BW_map_500C_EAT_No.csv`. The resolver has historical fallbacks;
-  inspect the resolved inventory so a fallback is not mistaken for matched data.
-- Deposition: `0505NDRYMON_<prefix><year>.nc` and
-  `0505NWETMON_<prefix><year>.nc`. Future prefixes normally equal the
-  agricultural scenario name; 2010 uses `Base`.
-- AP uses prefix `SSP2_BaU_NoCC_No_APMTFR`. An AP comparison is scientifically
-  interpretable only after verifying matched meteorology, model settings and
-  reference-emission assumptions. Registry support alone does not establish this.
-
-Use PLUM inputs retaining the corrected new-pasture livestock allocation and
-boundary-grid multiplier averaging. Those upstream PLUM changes are input
-requirements, not code supplied by this repository.
-
-VISIToRN also needs the seven static `Data_pd` arrays listed in
-`prepare_workspace.py`, basin IDs/names, TRIP drainage data and the VISIT
-NMIP3 natural-leaching file. The staging tool checks common required filenames;
-the R preflight checks selected scenario files. Neither check proves scientific
-compatibility. All large inputs remain outside this new code package.
-
-## 5 Prepare and calculate an isolated experiment
-
-Create a new directory outside the repository and the source input directories.
-The following are templates: replace the absolute paths with your own.
-Staging links only selected input files, never an entire writable `Data_pd`
-directory or previous output cache. It records SHA-256 hashes.
-
-```bash
-python3 scenario_workflow/prepare_workspace.py \
-  --target /path/to/new_run \
-  --nflow-data /path/to/inputs/NflowModel/data \
-  --visitorn-source /path/to/inputs/VISIToRN \
-  --mode symlink --plan
-
-# Remove --plan after inspecting the selected files.
-python3 scenario_workflow/prepare_workspace.py \
-  --target /path/to/new_run \
-  --nflow-data /path/to/inputs/NflowModel/data \
-  --visitorn-source /path/to/inputs/VISIToRN \
-  --mode symlink
-```
-
-Source files must remain immutable during the experiment. Use `--mode copy`
-for an independent input snapshot or when symlinks are unavailable.
-An existing target is refused. Partial preparations are not resumed automatically.
-
-Edit the configuration **inside the new run directory**. Paths in an env file
-are relative to that file, not to the shell's current directory.
-
-| Setting | Meaning |
+| Stage | Script and function |
 | --- | --- |
-| `RUN_ALL_COMBINATIONS=on` | Generate all registered combinations; the current registry has ten, not sixteen |
-| `RUN_SCENARIOS` | `all` or a list of generated IDs; `eight_cases.env` selects the eight-case factorial |
-| Four `SCENARIO_*` switches | Select one combination when run-all is off; set `RUN_SCENARIOS=all` |
-| `YEARS` | Future calculation years; default 2030, 2050, 2100 |
-| `SUMMARY_REFERENCE_YEAR` | Shared 2010 Baseline reference |
-| `OUTPUT_DIR` | Saved calculation directory; use a new directory for changed inputs |
-| `PLOT_SCENARIOS`, `PLOT_YEARS` | Independently select saved cases/years for plotting |
+| Agricultural calculations | `Make_Result_csv.r` calls `RawDataProcess.R` for each case, saves nitrogen-flow tables and agricultural leaching arrays, and retains plotting objects |
+| Agricultural figures | `Visualization_Nmodel.r` uses those objects to produce global, regional and spatial figures and ammonia comparisons |
+| River calculations and evaluation | `VISIToRN_input.r` builds combined inputs, calls `VISIToRN/Run_VISIToRN.r`, and produces river-load comparisons and concentration statistics |
+| Factor decomposition | `Deco.R` combines the agricultural and river results to decompose changes relative to Baseline 2010 |
 
-```bash
-cd /path/to/new_run
-export GAMS_DIR=/path/to/gams
-bash run_stage.sh preflight
-bash run_stage.sh calculate
+The first three scripts start from `NflowModel/R/`. River-input preparation
+changes the R working directory to `VISIToRN/`; decomposition runs there.
+The launcher manages this sequence. Do not use the older
+`NflowModel/Shell/nitrogen.sh` for this procedure.
+
+Without Bash, set `GAMS_DIR` in the operating system and run
+`Rscript tools/run_gmd.R` from the repository root. Alternatively, use one
+clean interactive R session, replacing the two installation paths below:
+
+```r
+Sys.setenv(GAMS_DIR = "/path/to/gams")
+Sys.unsetenv(c("VISITORN_CASES", "VISITORN_ARRAY_ONLY",
+              "VISITORN_ARRAY_OUTPUT_DIR"))
+setwd("/path/to/NflowModel_Int")
+source("tools/run_gmd.R")
+run_gmd_workflow(getwd())
 ```
 
-The launcher defaults to `eight_cases.env`. To use all ten registered cases:
+A successful process exit means the requested stages finished, not that their
+scientific results have been validated. Check the products listed below.
+The workflow does not automatically resume an interrupted R session.
 
-```bash
-bash run_stage.sh preflight NflowModel/scenario/scenario_config.env
-bash run_stage.sh calculate NflowModel/scenario/scenario_config.env
-```
+## 5 Locate and check the results
 
-On PBS, adapt `scenario_workflow/job_example.pbs` and submit a stage, for example
-`qsub -v WORKSPACE=/path/to/new_run,STAGE=calculate,GAMS_DIR=/path/to/gams job_example.pbs`.
-Node and queue names are site-specific. The package never submits jobs itself.
+Agricultural products in `NflowModel/output/` include `Result.csv`,
+`OUTgas_species.csv`, `OUTgas_species_17regions.csv`,
+`OUTgas_species_summary.csv` and `OUTgas_species_validation.csv`.
+Copies of the main tables are also written to `NflowModel/data/`.
+Check that `Result.csv` contains all seven main case labels:
+`Base2010`, `Base2030`, `Base2050`, `Base2100`,
+`Mit2030`, `Mit2050` and `Mit2100`.
 
-Unsupported AP combinations with CM or DFW fail explicitly. They need their own
-upstream inputs before registry expansion. A sixteen-case analysis is not yet
-available. No Nflow-to-GEOS-Chem feedback experiment is launched by these scripts.
+Representative figures in `NflowModel/output/` are:
 
-## 6 Plot saved results and calculate river loads
+- `plot1_finalrep.png`: global nitrogen flows.
+- `Input_17_stacked_components.png` and
+  `Input_17_stacked_components_500C.png`: regional nitrogen inputs.
+- `Output_17_finalrep.png` and `Output_17_finalrep_500C.png`:
+  regional nitrogen outputs.
+- `Input_combined_rev.png` and `Outgas_combined.png`:
+  spatial input and gaseous-loss comparisons.
+- `NH3_emiRegion_2010.png` and `NH3_emiRegion_2020.png`:
+  regional ammonia-emission comparisons.
 
-After successful Nflow calculation, plotting is a separate stage:
+River products use the `_NMIP3` suffix, because `NMIP3 = TRUE` is retained.
+In `VISIToRN/output/`, check `Obs_compare_NMIP3.png`,
+`River_Nload_top14_NMIP3.png`, and the seven
+`C_fw_analysis_<case>_NMIP3.rdat` and
+`C_fw_summary_<case>_NMIP3.csv` pairs.
+Here, `<case>` is `2010`, `2030`, `2050`, `2100`,
+`2030mit`, `2050mit` or `2100mit`.
+Observation-comparison metrics are saved separately as
+`VISIToRN/obs_compare_metrics_NMIP3.rdat`.
 
-```bash
-bash run_stage.sh plot
-# For ten cases, pass the same ten-case configuration as the second argument.
-bash run_stage.sh natural
-bash run_stage.sh route
-bash run_stage.sh compare
-```
+Aggregated river loads are saved as `df_river_all_NMIP3.rdat` and
+`df_river_all_mit_NMIP3.rdat` in `VISIToRN/Data_pd/`.
+Decomposition writes `df_Nload_factor_decomposition_LMDI_summary.csv`
+and `df_Nload_factor_decomposition_LMDI_long.csv` there, and writes
+`LMDI_Nload_decomposition_BaU_top14_absNload2010.png` and its
+`500C` counterpart to `VISIToRN/output/`.
 
-`plot` reads completed Nflow outputs. Change only plotting switches to redraw
-without recalculating. Global input/output comparisons default to future years;
-river comparisons retain the common 2010 Baseline and show 2010, 2030, 2050 and
-2100. River-load figures use Tg N per year; some intermediate tables retain
-explicitly named Gg/kg columns.
+Check warnings and units before comparing with the manuscript. The retained
+river-load and decomposition figures use Gg N per year; 1 Tg N equals
+1,000 Gg N. Agricultural summary tables use Tg N per year, whereas some grid
+and intermediate products use other units. Concentrations are expressed in
+mg N per litre. Use the table column definitions and code for each product;
+do not compare numbers without checking their units.
 
-`natural` prepares scenario-specific natural-leaching arrays from VISIT fluxes
-and PLUM land use for 2010 and the three future years. It does not run VISIT.
-`route` runs VISIToRN for all completed cases in the experiment; it uses fixed
-calibrated parameters, not a new MCMC fit. `compare` redraws comparisons from
-existing river results. The stage wrapper's routing/natural stages do not read
-the env file's plotting selection. For subsets or custom years, invoke the R
-entry points directly:
+Check `OUTgas_species_validation.csv` for failed component-sum checks.
+Confirm that every requested case/year was regenerated, the observation
+matching is unchanged, and the decomposition contributions reproduce the
+reported load change. Existing cached files are not evidence of a completed
+rerun. Compare regenerated tables with an untouched study-result archive.
 
-```bash
-Rscript VISIToRN/scenario/run_visitorn_scenarios.R \
-  --scenarios baseline,500c --years all --comparison-only on
-```
+## 6 Calibration and reproducibility limits
 
-Keep the Baseline result available for 2010 reference and basin ranking.
-The wrapper is configured for the default `_No`, NMIP3 experiment and years;
-advanced input-family experiments require corresponding natural-input settings.
+The standard run uses the fixed parameter vector in
+`VISIToRN/Demo_VISIToRN.R`:
+`ParFit_input = c(982.2591, 12.22721, 2.961817)`,
+in the order `Vmax, Kno3, Q10`. Keep these values for a run of this retained
+implementation; do not silently replace them with parameters from another
+input-data version. The standard launcher does not perform MCMC calibration.
 
-Saved products include:
+Calibration programs are retained in `VISIToRN/Run_VISIToRN_MCMC*.R`.
+The reconstructed three-chain script provides separate `RUN_MCMC` and
+`ANALYZE_RESULTS` switches. Reproducing the supplementary calibration
+diagnostics requires the study's chain files and matching settings, including
+initial values, likelihood, burn-in, thinning and random seeds. A new MCMC run
+is not guaranteed to reproduce the original chains or figures.
 
-- `NflowModel/output/scenarios/<id>/`: summaries, per-year R data,
-  grid emission/audit tables, resolved inputs, manifest and `completion.csv`.
-- `VISIToRN/Data_pd/natural_by_landuse/`: new natural-input caches and metadata.
-- `VISIToRN/output/scenarios/<id>/`: routing data, tables and per-case figures.
-- `VISIToRN/output/comparisons/<selection>/`: global and basin comparisons.
+The agricultural preprocessing uses stochastic Amelia imputation and does not
+set a fixed seed in the retained driver. Exact numerical replication therefore
+also requires the original random-number state or saved preprocessing products,
+as well as matching software and input versions. Record seeds and the R session
+information for any new run; a newly chosen seed is not the original study seed.
 
-Nflow refuses a non-empty case output directory. Use a fresh output directory
-for recalculation; do not delete completion records merely to reuse old outputs.
-The staging hash check detects changed inputs. VISIToRN's resume checks also
-compare source signatures. A scheduler exit alone is not scientific validation:
-check completion records, every requested case/year, units, input provenance
-and the resulting mass balances before using results.
+For a reproducible study archive, retain the code commit, processed-input
+checksums and provenance, software versions, adopted parameters, calibration
+chains, complete logs and reference outputs. This documentation update has not
+rerun the full global model or established numerical agreement with the paper.
+If the external study files are unavailable, the code can be inspected and
+existing results examined, but a complete from-inputs reproduction is not
+possible from the repository alone.
 
-## 7 Verification and publication scope
-
-The update retains the root GMD code and data; it does not rerun the paper.
-Synthetic tests cover the scenario registry, NUE transformations, gas context,
-manure helpers, grid exports, saved-result plotting, routing-input preparation
-and river comparisons. They do not establish global numerical equivalence or
-upstream AIM-Hub/PLUM/GEOS-Chem convergence.
-
-```bash
-python3 scenario_workflow/tests/run_tests.py
-python3 scenario_workflow/prepare_workspace.py --target /path/to/new_run --verify
-```
-
-The first command needs Rscript on PATH and the relevant R dependencies.
-The second checks a prepared input snapshot; it does not calculate the model.
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the checks actually performed.
-
-Before the GMD publication release, archive the precise GMD external inputs,
-software versions, calibration parameters and release commit with a persistent
-identifier. This update does not create a DOI or redistribute upstream datasets
-whose availability/licensing has not been established. Preserve existing
-VISIT/VISIToRN attribution in [VISIToRN/README.md](VISIToRN/README.md) and the
-source files when redistributing.
+VISIT and VISIToRN are existing models. Preserve their attribution in
+`VISIToRN/README.md` and the source files when using or redistributing this
+implementation.

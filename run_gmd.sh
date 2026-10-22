@@ -5,9 +5,5 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 : "${GAMS_DIR:?Set GAMS_DIR to the installed GAMS directory}"
 export GAMS_DIR
-cd "$root/NflowModel/R"
-Rscript Make_Result_csv.r
-Rscript Visualization_Nmodel.r
-# Correct filename; the historical Shell/nitrogen.sh used VISIToRNinput.r.
-Rscript VISIToRN_input.r
-Rscript Deco.R
+# Plotting and decomposition depend on objects retained in the same R session.
+exec Rscript "$root/tools/run_gmd.R"

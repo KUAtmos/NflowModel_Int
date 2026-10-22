@@ -4,11 +4,13 @@ Only headings, paragraphs, code blocks, flat lists and pipe tables are used.
 The public README is the editable text source; render the DOCX after changes.
 """
 from pathlib import Path
+import argparse
 import re
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -26,7 +28,7 @@ def runs(paragraph, text, table=False):
             run.bold = True
 
 
-def build():
+def build(output=None):
     doc = Document()
     # Some bundled default templates put a colored border under Title.
     for style in doc.styles:
@@ -89,9 +91,15 @@ def build():
             table = doc.add_table(rows=0, cols=len(rows[0]))
             table.style = "Table Grid"
             table.autofit = False
-            widths = [2.1, 4.77] if len(rows[0]) == 2 else [2.2, 1.2, 3.47]
-            if rows[0][0] == "Purpose":
-                widths = [1.8, 2.5, 2.57]
+            widths = [1.7, 5.17] if len(rows[0]) == 2 else [1.25, 3.5, 2.12]
+            borders = OxmlElement("w:tblBorders")
+            for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+                border = OxmlElement(f"w:{edge}")
+                border.set(qn("w:val"), "single")
+                border.set(qn("w:sz"), "4")
+                border.set(qn("w:color"), "D9D9D9")
+                borders.append(border)
+            table._tbl.tblPr.append(borders)
             for col, width in zip(table.columns, widths):
                 col.width = Inches(width)
             for row_index, row in enumerate(rows):
@@ -102,6 +110,19 @@ def build():
                     trpr.append(OxmlElement("w:tblHeader"))
                 for cell, text, width in zip(cells, row, widths):
                     cell.width = Inches(width)
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    tcpr = cell._tc.get_or_add_tcPr()
+                    margins = OxmlElement("w:tcMar")
+                    for edge in ("top", "bottom", "left", "right"):
+                        margin = OxmlElement(f"w:{edge}")
+                        margin.set(qn("w:w"), "80" if edge in ("top", "bottom") else "100")
+                        margin.set(qn("w:type"), "dxa")
+                        margins.append(margin)
+                    tcpr.append(margins)
+                    if row_index == 0:
+                        shading = OxmlElement("w:shd")
+                        shading.set(qn("w:fill"), "E8EEF4")
+                        tcpr.append(shading)
                     p = cell.paragraphs[0]
                     p.paragraph_format.space_after = Pt(4)
                     p.paragraph_format.space_before = Pt(3)
@@ -122,12 +143,16 @@ def build():
                 text += " " + lines[index].strip()
             p = doc.add_paragraph(style="List Bullet" if bullet else "Normal")
             runs(p, text)
+            if not bullet and text.rstrip().endswith(":"):
+                p.paragraph_format.keep_with_next = True
         index += 1
-    doc.core_properties.title = "NflowModel and VISIToRN user guide"
+    doc.core_properties.title = "Reproducing the GMD nitrogen flow study"
     doc.core_properties.author = "Yuto Osugi"
-    doc.core_properties.subject = "GMD reproduction and additional multi-scenario analysis"
-    doc.save(ROOT / "README.docx")
+    doc.core_properties.subject = "Inputs, execution and verification for the GMD study"
+    doc.save(output or ROOT / "README.docx")
 
 
 if __name__ == "__main__":
-    build()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, help="Optional alternate DOCX path")
+    build(parser.parse_args().output)
