@@ -1,0 +1,4 @@
+# Keep the new launchers executable by Unix shells after a Windows checkout.
+/run_gmd.sh text eol=lf
+/scenario_workflow/run_stage.sh text eol=lf
+/scenario_workflow/job_example.pbs text eol=lf
